@@ -1,2 +1,0 @@
-- [Project shape](project_shape.md) — MVP scheduling system, greenfield Go backend, Python OR-Tools sibling service agreed for solver integration
-- [User greeting convention](user_greeting.md) — first reply in any conversation must start with "Got you, papi!"

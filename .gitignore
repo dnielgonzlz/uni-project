@@ -18,6 +18,9 @@
 .DS_Store
 Thumbs.db
 
+# Claude Code (agent config, memory — do not commit)
+.claude/
+
 # IDE
 .idea/
 .vscode/
