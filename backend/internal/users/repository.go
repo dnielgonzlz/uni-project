@@ -203,6 +203,35 @@ func (r *Repository) GetClientByID(ctx context.Context, clientID uuid.UUID) (*Cl
 	return c, err
 }
 
+// GetClientsByCoachID returns all active clients belonging to a coach.
+func (r *Repository) GetClientsByCoachID(ctx context.Context, coachID uuid.UUID) ([]Client, error) {
+	const q = `
+		SELECT id, user_id, coach_id, tenure_started_at, sessions_per_month,
+		       priority_score, created_at, updated_at
+		FROM clients
+		WHERE coach_id = $1 AND deleted_at IS NULL
+		ORDER BY priority_score DESC, tenure_started_at ASC`
+
+	rows, err := r.db.Query(ctx, q, coachID)
+	if err != nil {
+		return nil, fmt.Errorf("users: get clients by coach: %w", err)
+	}
+	defer rows.Close()
+
+	var result []Client
+	for rows.Next() {
+		var c Client
+		if err := rows.Scan(
+			&c.ID, &c.UserID, &c.CoachID, &c.TenureStartedAt, &c.SessionsPerMonth,
+			&c.PriorityScore, &c.CreatedAt, &c.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("users: scan client: %w", err)
+		}
+		result = append(result, c)
+	}
+	return result, rows.Err()
+}
+
 // --- Scan helpers ---
 
 func scanUser(row pgx.Row) (*User, error) {

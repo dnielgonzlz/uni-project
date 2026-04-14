@@ -17,12 +17,15 @@ import (
 	"github.com/go-chi/httprate"
 
 	"github.com/danielgonzalez/pt-scheduler/internal/auth"
+	"github.com/danielgonzalez/pt-scheduler/internal/availability"
+	"github.com/danielgonzalez/pt-scheduler/internal/availability_intake"
 	"github.com/danielgonzalez/pt-scheduler/internal/messaging"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/clock"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/config"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/database"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/httpx"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/logger"
+	"github.com/danielgonzalez/pt-scheduler/internal/scheduling"
 	"github.com/danielgonzalez/pt-scheduler/internal/users"
 )
 
@@ -67,6 +70,19 @@ func main() {
 		fmt.Sprintf("http://localhost:%s", cfg.Port), // FRONTEND: replace with real app URL in production
 	)
 	authHandler := auth.NewHandler(authSvc)
+
+	availRepo := availability.NewRepository(db)
+	availSvc := availability.NewService(availRepo)
+	availHandler := availability.NewHandler(availSvc)
+
+	solver := scheduling.NewHTTPSolver(cfg.SolverURL, cfg.SolverTimeoutSeconds)
+	schedRepo := scheduling.NewRepository(db)
+	schedSvc := scheduling.NewService(schedRepo, usersRepo, availRepo, solver, clk, db)
+	schedHandler := scheduling.NewHandler(schedSvc)
+
+	intakeRepo := availability_intake.NewRepository(db)
+	intakeSvc := availability_intake.NewService(intakeRepo, availRepo, log)
+	intakeHandler := availability_intake.NewHandler(intakeSvc, log)
 
 	// --- Router ---
 	r := chi.NewRouter()
@@ -129,8 +145,34 @@ func main() {
 				r.Put("/clients/{clientID}/profile", usersHandler.UpdateClientProfile)
 			})
 
-			// Phases 3–5 routes registered here as implemented
+			// --- Availability ---
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole(users.RoleCoach, users.RoleAdmin))
+				r.Get("/coaches/{coachID}/availability", availHandler.GetWorkingHours)
+				r.Put("/coaches/{coachID}/availability", availHandler.SetWorkingHours)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole(users.RoleClient, users.RoleAdmin))
+				r.Get("/clients/{clientID}/preferences", availHandler.GetPreferredWindows)
+				r.Put("/clients/{clientID}/preferences", availHandler.SetPreferredWindows)
+			})
+
+			// --- Scheduling ---
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole(users.RoleCoach, users.RoleAdmin))
+				r.Post("/schedule-runs", schedHandler.TriggerScheduleRun)
+				r.Post("/schedule-runs/{runID}/confirm", schedHandler.ConfirmScheduleRun)
+				r.Post("/schedule-runs/{runID}/reject", schedHandler.RejectScheduleRun)
+			})
+			r.Get("/schedule-runs/{runID}", schedHandler.GetScheduleRun)
+			r.Get("/sessions", schedHandler.ListSessions)
+			r.Post("/sessions/{sessionID}/cancel", schedHandler.CancelSession)
+
+			// Phase 4–5 routes registered here as implemented
 		})
+
+		// --- Webhooks (no JWT — verified by provider signature in Phase 6) ---
+		r.Post("/webhooks/twilio", intakeHandler.InboundSMS)
 	})
 
 	srv := &http.Server{

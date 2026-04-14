@@ -1,6 +1,6 @@
 # PT Scheduler — Backend Implementation Plan
 
-> Last updated: Phase 2 complete
+> Last updated: Phase 3 complete
 
 ---
 
@@ -131,22 +131,24 @@ PUT  /api/v1/clients/{id}/profile
 
 ---
 
-### Phase 3 — Availability & Core Scheduling 🔲 NEXT
+### Phase 3 — Availability & Core Scheduling ✅ COMPLETE
 
 **Goal**: Trainer working hours, client preferences, session booking with constraint enforcement, OR-Tools integration, schedule confirmation flow.
 
-- [ ] `internal/availability/` — CRUD for trainer hours + client preferred windows
-- [ ] `internal/scheduling/model.go` — Session, ScheduleRun, SessionCredit structs
-- [ ] `internal/scheduling/constraints.go` — hard constraint validators (24h recovery, max sessions/day, working hours)
-- [ ] `internal/scheduling/repository.go` — session DB queries with conflict detection
-- [ ] `internal/scheduling/solver_client.go` — HTTP client to OR-Tools microservice
-- [ ] `internal/scheduling/service.go` — propose, confirm, reject, expire schedule runs
-- [ ] `internal/scheduling/confirmation.go` — trainer confirmation flow
-- [ ] `internal/scheduling/handler.go` — HTTP handlers
-- [ ] `solver/` — Python FastAPI service with OR-Tools CP-SAT model
-- [ ] `internal/availability_intake/` — SMS state machine for collecting client availability via Twilio
-- [ ] Unit tests: constraint validators, solver client mock
-- [ ] `migrations/000003_*` — if needed
+- [x] `internal/availability/` — model, repository (replace working hours + preferred windows), service, handler
+- [x] `internal/scheduling/model.go` — Session, ScheduleRun, SessionCredit, SolverRequest/Response
+- [x] `internal/scheduling/constraints.go` — CheckRecoveryPeriod, CheckDailyLimit, CheckWithinWorkingHours, CancellationEarnsCredit
+- [x] `internal/scheduling/repository.go` — session + schedule run + credit DB queries; ExpireOldRuns
+- [x] `internal/scheduling/solver_client.go` — Solver interface + HTTPSolver (30s timeout, no retries)
+- [x] `internal/scheduling/service.go` — TriggerScheduleRun, GetScheduleRun, Confirm, Reject, ListSessions, CancelSession
+- [x] `internal/scheduling/handler.go` — 6 HTTP handlers with full error mapping
+- [x] `solver/solver.py` — OR-Tools CP-SAT model (all hard + soft constraints, 30-min slots, 25s time limit)
+- [x] `solver/main.py` — FastAPI wrapper (POST /solve, GET /healthz)
+- [x] `solver/requirements.txt`
+- [x] `internal/availability_intake/` — SMS state machine (idle → awaiting_days → awaiting_times → complete)
+- [x] `internal/availability_intake/handler.go` — Twilio TwiML webhook handler
+- [x] Unit tests: 14 constraint tests (recovery period, daily limit, working hours, cancellation credit)
+- [x] All routes wired in `cmd/api/main.go`
 
 **Endpoints added:**
 ```
@@ -164,7 +166,7 @@ POST /api/v1/schedule-runs/{id}/reject
 
 ---
 
-### Phase 4 — Billing 🔲
+### Phase 4 — Billing 🔲 NEXT
 
 **Goal**: Monthly Stripe charges, GoCardless Direct Debit mandates, webhook idempotency, session credits.
 
