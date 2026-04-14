@@ -1,0 +1,16 @@
+# Environment — never commit real credentials
+.env
+
+# Compiled binaries
+dist/
+
+# Go test cache
+*.test
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
