@@ -1,6 +1,6 @@
 # PT Scheduler — Backend Implementation Plan
 
-> Last updated: Phase 1 complete
+> Last updated: Phase 2 complete
 
 ---
 
@@ -95,23 +95,25 @@ make run               # starts server on :8080
 
 ---
 
-### Phase 2 — Auth & Users 🔲 NEXT
+### Phase 2 — Auth & Users ✅ COMPLETE
 
 **Goal**: Registration, login, logout, token refresh, password reset, RBAC middleware.
 
-- [ ] `internal/users/model.go` — User, Coach, Client structs
-- [ ] `internal/users/repository.go` — DB queries for users, coaches, clients
-- [ ] `internal/users/service.go` — create coach/client, fetch profile
-- [ ] `internal/users/handler.go` — GET/PUT profile endpoints
-- [ ] `internal/auth/model.go` — token claims structs
-- [ ] `internal/auth/repository.go` — refresh token + password reset token DB queries
-- [ ] `internal/auth/service.go` — register, login, logout, refresh, forgot/reset password
-- [ ] `internal/auth/handler.go` — HTTP handlers for all auth endpoints
-- [ ] `internal/auth/middleware.go` — JWT verify middleware + role-based authz
-- [ ] `migrations/000002_*` — any schema additions (none expected)
-- [ ] Rate limiting tightened on `/api/v1/auth/*` routes
-- [ ] Resend integration: password reset email with expiring link
-- [ ] Unit tests: registration, login, token refresh, expired token rejection
+- [x] `internal/users/model.go` — User, Coach, Client structs
+- [x] `internal/users/repository.go` — DB queries for users, coaches, clients
+- [x] `internal/users/service.go` — create coach/client, fetch profile
+- [x] `internal/users/handler.go` — GET/PUT profile endpoints
+- [x] `internal/auth/model.go` — token claims structs
+- [x] `internal/auth/repository.go` — refresh token + password reset token DB queries
+- [x] `internal/auth/password.go` — argon2id hashing + SHA-256 token hashing
+- [x] `internal/auth/jwt.go` — JWT generation and parsing
+- [x] `internal/auth/service.go` — register, login, logout, refresh, forgot/reset password
+- [x] `internal/auth/handler.go` — HTTP handlers for all auth endpoints
+- [x] `internal/auth/middleware.go` — JWT verify middleware + role-based authz
+- [x] Rate limiting tightened on `/api/v1/auth/*` routes (10 req/min)
+- [x] `internal/messaging/email.go` — Resend wrapper for password reset email
+- [x] Unit tests: password hashing, token generation, JWT sign/verify/expiry, clock
+- [x] All routes wired in `cmd/api/main.go`
 
 **Endpoints added:**
 ```
@@ -129,7 +131,7 @@ PUT  /api/v1/clients/{id}/profile
 
 ---
 
-### Phase 3 — Availability & Core Scheduling 🔲
+### Phase 3 — Availability & Core Scheduling 🔲 NEXT
 
 **Goal**: Trainer working hours, client preferences, session booking with constraint enforcement, OR-Tools integration, schedule confirmation flow.
 

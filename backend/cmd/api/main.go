@@ -16,10 +16,14 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/go-chi/httprate"
 
+	"github.com/danielgonzalez/pt-scheduler/internal/auth"
+	"github.com/danielgonzalez/pt-scheduler/internal/messaging"
+	"github.com/danielgonzalez/pt-scheduler/internal/platform/clock"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/config"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/database"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/httpx"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/logger"
+	"github.com/danielgonzalez/pt-scheduler/internal/users"
 )
 
 func main() {
@@ -43,9 +47,31 @@ func main() {
 
 	log.Info("database connected")
 
+	// --- Dependency wiring ---
+	clk := clock.Real{}
+
+	usersRepo := users.NewRepository(db)
+	usersSvc := users.NewService(usersRepo)
+	usersHandler := users.NewHandler(usersSvc)
+
+	emailSvc := messaging.NewEmailService(cfg.ResendAPIKey, cfg.ResendFromAddress)
+
+	authRepo := auth.NewRepository(db)
+	authSvc := auth.NewService(
+		authRepo, usersRepo, clk,
+		cfg.JWTSecret,
+		cfg.JWTAccessExpiryMin,
+		cfg.JWTRefreshExpiryDays,
+		cfg.PasswordResetExpiryMin,
+		emailSvc,
+		fmt.Sprintf("http://localhost:%s", cfg.Port), // FRONTEND: replace with real app URL in production
+	)
+	authHandler := auth.NewHandler(authSvc)
+
+	// --- Router ---
 	r := chi.NewRouter()
 
-	// --- Middleware stack (in order per architecture plan) ---
+	// Middleware stack (in order per architecture plan)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
 	r.Use(httpx.RequestLogger(log))
@@ -57,19 +83,54 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	// Global rate limit: 100 requests per minute per IP
+	// Global: 100 req/min per IP
 	r.Use(httprate.LimitByIP(100, time.Minute))
 	r.Use(middleware.CleanPath)
 	r.Use(httpx.RequireJSON)
 
-	// --- Routes ---
+	// --- Health routes (no auth) ---
 	r.Get("/healthz", healthzHandler())
 	r.Get("/readyz", readyzHandler(db))
 
-	// FRONTEND: All /api/v1/* routes will be registered here as each domain
-	// package is implemented in subsequent phases.
+	// --- API v1 ---
 	r.Route("/api/v1", func(r chi.Router) {
-		// Auth, users, scheduling, billing routes added in Phase 2+
+
+		// Auth routes — stricter rate limit: 10 req/min per IP
+		r.Group(func(r chi.Router) {
+			r.Use(httprate.LimitByIP(10, time.Minute))
+			r.Post("/auth/register", authHandler.Register)
+			r.Post("/auth/login", authHandler.Login)
+			r.Post("/auth/forgot-password", authHandler.ForgotPassword)
+			r.Post("/auth/reset-password", authHandler.ResetPassword)
+		})
+
+		// Auth routes that require a valid (but not necessarily fresh) token
+		r.Group(func(r chi.Router) {
+			r.Use(httprate.LimitByIP(30, time.Minute))
+			r.Post("/auth/logout", authHandler.Logout)
+			r.Post("/auth/refresh", authHandler.Refresh)
+		})
+
+		// Protected routes — JWT required
+		r.Group(func(r chi.Router) {
+			r.Use(auth.Middleware(cfg.JWTSecret))
+
+			// Coach-only routes
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole(users.RoleCoach, users.RoleAdmin))
+				r.Get("/coaches/{coachID}/profile", usersHandler.GetCoachProfile)
+				r.Put("/coaches/{coachID}/profile", usersHandler.UpdateCoachProfile)
+			})
+
+			// Client-only routes
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole(users.RoleClient, users.RoleAdmin))
+				r.Get("/clients/{clientID}/profile", usersHandler.GetClientProfile)
+				r.Put("/clients/{clientID}/profile", usersHandler.UpdateClientProfile)
+			})
+
+			// Phases 3–5 routes registered here as implemented
+		})
 	})
 
 	srv := &http.Server{
