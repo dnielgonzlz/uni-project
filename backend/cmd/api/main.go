@@ -19,6 +19,7 @@ import (
 	"github.com/danielgonzalez/pt-scheduler/internal/auth"
 	"github.com/danielgonzalez/pt-scheduler/internal/availability"
 	"github.com/danielgonzalez/pt-scheduler/internal/availability_intake"
+	"github.com/danielgonzalez/pt-scheduler/internal/billing"
 	"github.com/danielgonzalez/pt-scheduler/internal/messaging"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/clock"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/config"
@@ -84,10 +85,24 @@ func main() {
 	intakeSvc := availability_intake.NewService(intakeRepo, availRepo, log)
 	intakeHandler := availability_intake.NewHandler(intakeSvc, log)
 
+	billingRepo := billing.NewRepository(db)
+	stripeClient := billing.NewStripeClient(cfg.StripeSecretKey, cfg.StripeWebhookSecret)
+	gcClient := billing.NewGoCardlessClient(cfg.GoCardlessAccessToken, cfg.GoCardlessWebhookSecret, cfg.GoCardlessEnv)
+	billingSvc := billing.NewService(billingRepo, stripeClient, gcClient, log)
+	billingHandler := billing.NewHandler(billingSvc, log)
+
+	smsSvc := messaging.NewSMSService(cfg.TwilioAccountSID, cfg.TwilioAuthToken, cfg.TwilioFromNumber, cfg.MessagingChannel)
+	outboxRepo := messaging.NewOutboxRepository(db)
+	notifSvc := messaging.NewNotificationService(outboxRepo, emailSvc, smsSvc, log)
+
+	// Wire the notification service into the scheduling service so it can enqueue
+	// booking confirmations and cancellation messages after schedule runs are confirmed.
+	schedSvc.WithNotifier(notifSvc)
+
 	// --- Router ---
 	r := chi.NewRouter()
 
-	// Middleware stack (in order per architecture plan)
+	// Global middleware stack (in order per architecture plan)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
 	r.Use(httpx.RequestLogger(log))
@@ -102,77 +117,101 @@ func main() {
 	// Global: 100 req/min per IP
 	r.Use(httprate.LimitByIP(100, time.Minute))
 	r.Use(middleware.CleanPath)
-	r.Use(httpx.RequireJSON)
+	// NOTE: RequireJSON is applied per-route-group below, NOT globally, so that
+	// webhook routes (Stripe, GoCardless, Twilio) can receive their native content
+	// types and read raw bodies for signature verification.
 
-	// --- Health routes (no auth) ---
+	// --- Health routes (no auth, no content-type enforcement) ---
 	r.Get("/healthz", healthzHandler())
 	r.Get("/readyz", readyzHandler(db))
 
 	// --- API v1 ---
 	r.Route("/api/v1", func(r chi.Router) {
 
-		// Auth routes — stricter rate limit: 10 req/min per IP
+		// Webhook routes: raw body, provider-native content types, no RequireJSON.
+		// These are authenticated by provider HMAC/signature, not JWT.
 		r.Group(func(r chi.Router) {
-			r.Use(httprate.LimitByIP(10, time.Minute))
-			r.Post("/auth/register", authHandler.Register)
-			r.Post("/auth/login", authHandler.Login)
-			r.Post("/auth/forgot-password", authHandler.ForgotPassword)
-			r.Post("/auth/reset-password", authHandler.ResetPassword)
+			r.Post("/webhooks/stripe", billingHandler.StripeWebhook)
+			r.Post("/webhooks/gocardless", billingHandler.GoCardlessWebhook)
+			// Twilio sends application/x-www-form-urlencoded — also excluded from RequireJSON.
+			r.Post("/webhooks/twilio", intakeHandler.InboundSMS)
 		})
 
-		// Auth routes that require a valid (but not necessarily fresh) token
+		// All remaining API routes enforce Content-Type: application/json.
 		r.Group(func(r chi.Router) {
-			r.Use(httprate.LimitByIP(30, time.Minute))
-			r.Post("/auth/logout", authHandler.Logout)
-			r.Post("/auth/refresh", authHandler.Refresh)
+			r.Use(httpx.RequireJSON)
+
+			// Auth routes — stricter rate limit: 10 req/min per IP
+			r.Group(func(r chi.Router) {
+				r.Use(httprate.LimitByIP(10, time.Minute))
+				r.Post("/auth/register", authHandler.Register)
+				r.Post("/auth/login", authHandler.Login)
+				r.Post("/auth/forgot-password", authHandler.ForgotPassword)
+				r.Post("/auth/reset-password", authHandler.ResetPassword)
+			})
+
+			// Auth routes that require a valid (but not necessarily fresh) token
+			r.Group(func(r chi.Router) {
+				r.Use(httprate.LimitByIP(30, time.Minute))
+				r.Post("/auth/logout", authHandler.Logout)
+				r.Post("/auth/refresh", authHandler.Refresh)
+			})
+
+			// Protected routes — JWT required
+			r.Group(func(r chi.Router) {
+				r.Use(auth.Middleware(cfg.JWTSecret))
+
+				// Coach-only routes
+				r.Group(func(r chi.Router) {
+					r.Use(auth.RequireRole(users.RoleCoach, users.RoleAdmin))
+					r.Get("/coaches/{coachID}/profile", usersHandler.GetCoachProfile)
+					r.Put("/coaches/{coachID}/profile", usersHandler.UpdateCoachProfile)
+				})
+
+				// Client-only routes
+				r.Group(func(r chi.Router) {
+					r.Use(auth.RequireRole(users.RoleClient, users.RoleAdmin))
+					r.Get("/clients/{clientID}/profile", usersHandler.GetClientProfile)
+					r.Put("/clients/{clientID}/profile", usersHandler.UpdateClientProfile)
+				})
+
+				// --- Availability ---
+				r.Group(func(r chi.Router) {
+					r.Use(auth.RequireRole(users.RoleCoach, users.RoleAdmin))
+					r.Get("/coaches/{coachID}/availability", availHandler.GetWorkingHours)
+					r.Put("/coaches/{coachID}/availability", availHandler.SetWorkingHours)
+				})
+				r.Group(func(r chi.Router) {
+					r.Use(auth.RequireRole(users.RoleClient, users.RoleAdmin))
+					r.Get("/clients/{clientID}/preferences", availHandler.GetPreferredWindows)
+					r.Put("/clients/{clientID}/preferences", availHandler.SetPreferredWindows)
+				})
+
+				// --- Scheduling ---
+				r.Group(func(r chi.Router) {
+					r.Use(auth.RequireRole(users.RoleCoach, users.RoleAdmin))
+					r.Post("/schedule-runs", schedHandler.TriggerScheduleRun)
+					r.Post("/schedule-runs/{runID}/confirm", schedHandler.ConfirmScheduleRun)
+					r.Post("/schedule-runs/{runID}/reject", schedHandler.RejectScheduleRun)
+				})
+				r.Get("/schedule-runs/{runID}", schedHandler.GetScheduleRun)
+				r.Get("/sessions", schedHandler.ListSessions)
+				r.Post("/sessions/{sessionID}/cancel", schedHandler.CancelSession)
+
+				// --- Billing ---
+				r.Group(func(r chi.Router) {
+					r.Use(auth.RequireRole(users.RoleCoach, users.RoleAdmin))
+					// Stripe card setup — coach initiates on behalf of a client
+					r.Post("/payments/setup-intent", billingHandler.CreateSetupIntent)
+					// GoCardless Direct Debit — coach initiates mandate flow for a client
+					r.Post("/payments/mandate", billingHandler.CreateMandateFlow)
+					// Completes the mandate after GoCardless redirects the client back
+					r.Post("/payments/mandate/complete", billingHandler.CompleteMandateFlow)
+					// Manual monthly charge trigger
+					r.Post("/billing/charge", billingHandler.Charge)
+				})
+			})
 		})
-
-		// Protected routes — JWT required
-		r.Group(func(r chi.Router) {
-			r.Use(auth.Middleware(cfg.JWTSecret))
-
-			// Coach-only routes
-			r.Group(func(r chi.Router) {
-				r.Use(auth.RequireRole(users.RoleCoach, users.RoleAdmin))
-				r.Get("/coaches/{coachID}/profile", usersHandler.GetCoachProfile)
-				r.Put("/coaches/{coachID}/profile", usersHandler.UpdateCoachProfile)
-			})
-
-			// Client-only routes
-			r.Group(func(r chi.Router) {
-				r.Use(auth.RequireRole(users.RoleClient, users.RoleAdmin))
-				r.Get("/clients/{clientID}/profile", usersHandler.GetClientProfile)
-				r.Put("/clients/{clientID}/profile", usersHandler.UpdateClientProfile)
-			})
-
-			// --- Availability ---
-			r.Group(func(r chi.Router) {
-				r.Use(auth.RequireRole(users.RoleCoach, users.RoleAdmin))
-				r.Get("/coaches/{coachID}/availability", availHandler.GetWorkingHours)
-				r.Put("/coaches/{coachID}/availability", availHandler.SetWorkingHours)
-			})
-			r.Group(func(r chi.Router) {
-				r.Use(auth.RequireRole(users.RoleClient, users.RoleAdmin))
-				r.Get("/clients/{clientID}/preferences", availHandler.GetPreferredWindows)
-				r.Put("/clients/{clientID}/preferences", availHandler.SetPreferredWindows)
-			})
-
-			// --- Scheduling ---
-			r.Group(func(r chi.Router) {
-				r.Use(auth.RequireRole(users.RoleCoach, users.RoleAdmin))
-				r.Post("/schedule-runs", schedHandler.TriggerScheduleRun)
-				r.Post("/schedule-runs/{runID}/confirm", schedHandler.ConfirmScheduleRun)
-				r.Post("/schedule-runs/{runID}/reject", schedHandler.RejectScheduleRun)
-			})
-			r.Get("/schedule-runs/{runID}", schedHandler.GetScheduleRun)
-			r.Get("/sessions", schedHandler.ListSessions)
-			r.Post("/sessions/{sessionID}/cancel", schedHandler.CancelSession)
-
-			// Phase 4–5 routes registered here as implemented
-		})
-
-		// --- Webhooks (no JWT — verified by provider signature in Phase 6) ---
-		r.Post("/webhooks/twilio", intakeHandler.InboundSMS)
 	})
 
 	srv := &http.Server{
@@ -187,6 +226,13 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
+	// Start the notification outbox worker. It shares the server's lifecycle:
+	// when the stop signal fires we cancel workerCtx before closing the DB pool.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	notifWorker := messaging.NewWorker(outboxRepo, notifSvc, log)
+	go notifWorker.Run(workerCtx)
+
 	go func() {
 		log.Info("server starting", "port", cfg.Port, "env", cfg.Env)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -197,6 +243,9 @@ func main() {
 
 	<-stop
 	log.Info("shutting down server")
+
+	// Stop the notification worker before closing the DB pool.
+	workerCancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

@@ -25,14 +25,47 @@ var ErrRunNotPending = errors.New("schedule run is not pending confirmation")
 // ErrForbidden is returned when a user tries to act on a resource they don't own.
 var ErrForbidden = errors.New("forbidden")
 
+// Notifier is implemented by the messaging package and called after key events.
+// Using an interface keeps the scheduling package free of messaging imports.
+type Notifier interface {
+	NotifySessionsConfirmed(ctx context.Context, sessions []SessionNotifPayload) error
+	NotifySessionCancelled(ctx context.Context, p CancelNotifPayload) error
+}
+
+// SessionNotifPayload carries the data the notification service needs to
+// send booking confirmation + reminder messages to a client.
+type SessionNotifPayload struct {
+	SessionID   uuid.UUID
+	ClientID    uuid.UUID
+	CoachID     uuid.UUID
+	StartsAt    time.Time
+	ClientName  string
+	ClientEmail string
+	ClientPhone string
+	CoachName   string
+	CoachEmail  string
+}
+
+// CancelNotifPayload carries data for a session cancellation notification.
+type CancelNotifPayload struct {
+	SessionID    uuid.UUID
+	ClientID     uuid.UUID
+	StartsAt     time.Time
+	ClientName   string
+	ClientEmail  string
+	ClientPhone  string
+	CreditIssued bool
+}
+
 // Service handles session booking, schedule runs, and session credits.
 type Service struct {
-	repo         *Repository
-	usersRepo    *users.Repository
-	availRepo    *availability.Repository
-	solver       Solver
-	clock        clock.Clock
-	db           *pgxpool.Pool
+	repo      *Repository
+	usersRepo *users.Repository
+	availRepo *availability.Repository
+	solver    Solver
+	clock     clock.Clock
+	db        *pgxpool.Pool
+	notifier  Notifier // optional; nil disables notifications
 }
 
 func NewService(
@@ -51,6 +84,12 @@ func NewService(
 		clock:     clk,
 		db:        db,
 	}
+}
+
+// WithNotifier attaches a notification dispatcher to the service.
+// Call this after NewService to enable post-confirmation notifications.
+func (s *Service) WithNotifier(n Notifier) {
+	s.notifier = n
 }
 
 // TriggerScheduleRun loads coach/client data, calls the solver, and persists proposed sessions.
@@ -212,6 +251,17 @@ func (s *Service) ConfirmScheduleRun(ctx context.Context, coachID, runID uuid.UU
 	}
 
 	run.Sessions, _ = s.repo.ListActiveSessionsByRunID(ctx, runID)
+
+	// Enqueue notifications for every confirmed session (non-fatal if it fails).
+	if s.notifier != nil && len(run.Sessions) > 0 {
+		if payloads, err := s.buildSessionNotifPayloads(ctx, coachID, run.Sessions); err == nil {
+			if err := s.notifier.NotifySessionsConfirmed(ctx, payloads); err != nil {
+				// Notifications are best-effort — don't fail the confirmation.
+				_ = err
+			}
+		}
+	}
+
 	return run, nil
 }
 
@@ -282,10 +332,72 @@ func (s *Service) CancelSession(ctx context.Context, sessionID uuid.UUID, req Ca
 		}
 	}
 
+	// Enqueue cancellation notification (non-fatal).
+	if s.notifier != nil {
+		if client, err := s.usersRepo.GetClientByID(ctx, session.ClientID); err == nil {
+			if clientUser, err := s.usersRepo.GetUserByID(ctx, client.UserID); err == nil {
+				phone := ""
+				if clientUser.PhoneE164 != nil {
+					phone = *clientUser.PhoneE164
+				}
+				_ = s.notifier.NotifySessionCancelled(ctx, CancelNotifPayload{
+					SessionID:    session.ID,
+					ClientID:     session.ClientID,
+					StartsAt:     session.StartsAt,
+					ClientName:   clientUser.FullName,
+					ClientEmail:  clientUser.Email,
+					ClientPhone:  phone,
+					CreditIssued: credit != nil,
+				})
+			}
+		}
+	}
+
 	return cancelled, credit, nil
 }
 
 // --- helpers ---
+
+// buildSessionNotifPayloads fetches user contact info for each session so the
+// notification service can send emails/SMS without its own DB access.
+func (s *Service) buildSessionNotifPayloads(ctx context.Context, coachID uuid.UUID, sessions []Session) ([]SessionNotifPayload, error) {
+	coach, err := s.usersRepo.GetCoachByID(ctx, coachID)
+	if err != nil {
+		return nil, err
+	}
+	coachUser, err := s.usersRepo.GetUserByID(ctx, coach.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	payloads := make([]SessionNotifPayload, 0, len(sessions))
+	for _, sess := range sessions {
+		client, err := s.usersRepo.GetClientByID(ctx, sess.ClientID)
+		if err != nil {
+			continue
+		}
+		clientUser, err := s.usersRepo.GetUserByID(ctx, client.UserID)
+		if err != nil {
+			continue
+		}
+		phone := ""
+		if clientUser.PhoneE164 != nil {
+			phone = *clientUser.PhoneE164
+		}
+		payloads = append(payloads, SessionNotifPayload{
+			SessionID:   sess.ID,
+			ClientID:    sess.ClientID,
+			CoachID:     coachID,
+			StartsAt:    sess.StartsAt,
+			ClientName:  clientUser.FullName,
+			ClientEmail: clientUser.Email,
+			ClientPhone: phone,
+			CoachName:   coachUser.FullName,
+			CoachEmail:  coachUser.Email,
+		})
+	}
+	return payloads, nil
+}
 
 func toSolverTimeSlots(hours []availability.WorkingHours) []SolverTimeSlot {
 	slots := make([]SolverTimeSlot, len(hours))

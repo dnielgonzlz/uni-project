@@ -20,6 +20,20 @@ func NewEmailService(apiKey, fromAddress string) *EmailService {
 	}
 }
 
+// SendEmail sends a generic HTML email. Used by the notification worker.
+func (e *EmailService) SendEmail(ctx context.Context, toEmail, toName, subject, htmlBody string) error {
+	params := &resend.SendEmailRequest{
+		From:    e.fromAddress,
+		To:      []string{toEmail},
+		Subject: subject,
+		Html:    htmlBody,
+	}
+	if _, err := e.client.Emails.SendWithContext(ctx, params); err != nil {
+		return fmt.Errorf("email: send to %s: %w", toEmail, err)
+	}
+	return nil
+}
+
 // SendPasswordReset sends a password reset email with a single-use link.
 // The link expires after the configured reset expiry window (default 60 min).
 func (e *EmailService) SendPasswordReset(ctx context.Context, toEmail, toName, resetLink string) error {

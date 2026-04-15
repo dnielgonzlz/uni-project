@@ -1,6 +1,6 @@
 # PT Scheduler — Backend Implementation Plan
 
-> Last updated: Phase 3 complete
+> Last updated: Phase 5 complete
 
 ---
 
@@ -166,39 +166,50 @@ POST /api/v1/schedule-runs/{id}/reject
 
 ---
 
-### Phase 4 — Billing 🔲 NEXT
+### Phase 4 — Billing ✅ COMPLETE
 
-**Goal**: Monthly Stripe charges, GoCardless Direct Debit mandates, webhook idempotency, session credits.
+**Goal**: Monthly Stripe charges, GoCardless Direct Debit mandates, webhook idempotency.
 
-- [ ] `internal/billing/stripe.go` — PaymentIntent creation (SCA/3DS2), webhook handler
-- [ ] `internal/billing/gocardless.go` — mandate creation, Bacs payment, webhook handler
-- [ ] `internal/billing/service.go` — monthly billing job logic, credit issuance on cancellation
-- [ ] `internal/billing/handler.go` — HTTP handlers + webhook routes
-- [ ] Outbox table + background worker for post-confirmation payment triggers
-- [ ] Webhook idempotency via `webhook_events` table
-- [ ] GoCardless Bacs 3-day advance notice enforcement
-- [ ] Unit tests: idempotency key generation, credit issuance logic
+- [x] `internal/billing/model.go` — Payment, Mandate, WebhookEvent; request/response types; IdempotencyKey helper
+- [x] `internal/billing/repository.go` — CreatePayment (idempotent), GetPaymentByProviderRef, UpdatePaymentStatus, ListPaymentsByClient, UpsertMandate, GetMandateByClientID, RecordWebhookEvent; BacsEarliestChargeDate (skips weekends, 3-day/2-day advance notice)
+- [x] `internal/billing/stripe.go` — StripeClient: CreateOrGetCustomer, CreateSetupIntent, ChargeMonthly (off_session SCA/3DS2), VerifyWebhookSignature
+- [x] `internal/billing/gocardless.go` — GoCardlessClient (raw HTTP, no SDK): CreateRedirectFlow, CompleteRedirectFlow, CreatePayment (with Bacs charge_date), VerifyWebhookSignature (HMAC-SHA256)
+- [x] `internal/billing/service.go` — CreateSetupIntent, CreateMandateFlow, CompleteMandateFlow, ChargeMonthly (idempotent, Stripe + GoCardless), HandleStripeWebhook, HandleGoCardlessWebhook
+- [x] `internal/billing/handler.go` — HTTP handlers for setup-intent, mandate, mandate/complete, charge, Stripe webhook, GoCardless webhook
+- [x] `internal/billing/utils.go` — parseJSON helper
+- [x] Webhook idempotency via `webhook_events` table (ON CONFLICT DO NOTHING)
+- [x] `RequireJSON` moved off global middleware — now scoped to JSON API routes only; webhook routes bypass it for raw body + HMAC verification
+- [x] All billing routes wired in `cmd/api/main.go`
+- [x] Unit tests: 14 tests covering IdempotencyKey format/uniqueness, BacsEarliestChargeDate weekend-skipping, pad helpers
 
 **Endpoints added:**
 ```
 POST /api/v1/payments/setup-intent
 POST /api/v1/payments/mandate
+POST /api/v1/payments/mandate/complete
+POST /api/v1/billing/charge
 POST /api/v1/webhooks/stripe
 POST /api/v1/webhooks/gocardless
 ```
 
 ---
 
-### Phase 5 — Notifications 🔲
+### Phase 5 — Notifications ✅ COMPLETE
 
-**Goal**: Email and SMS notifications for bookings, reminders, and cancellations.
+**Goal**: Email and SMS notifications for bookings, reminders, and cancellations via transactional outbox.
 
-- [ ] `internal/messaging/email.go` — Resend client wrapper
-- [ ] `internal/messaging/sms.go` — Twilio SMS client wrapper (WhatsApp-ready interface)
-- [ ] `internal/messaging/service.go` — send booking confirmation, reminder, cancellation
-- [ ] Email templates: booking confirmation, session reminder (24h before), cancellation notice
-- [ ] Background worker consuming the outbox table
-- [ ] `POST /api/v1/webhooks/twilio` — inbound SMS webhook for availability intake replies
+- [x] `migrations/000002_outbox.up.sql` — `notification_outbox` table with `pending/processing/done/failed` status, `process_after` for scheduled delivery, `SELECT FOR UPDATE SKIP LOCKED` for safe concurrent workers
+- [x] `internal/messaging/sms.go` — Twilio SMS wrapper; WhatsApp channel toggle via `MESSAGING_CHANNEL=whatsapp`
+- [x] `internal/messaging/templates.go` — UK-localised email (HTML) and SMS templates for: booking confirmation, 24h reminder, cancellation (with/without credit), payment failed coach alert
+- [x] `internal/messaging/outbox.go` — OutboxRepository: Enqueue, ClaimBatch (SKIP LOCKED), MarkDone, MarkFailed (retry up to 5 attempts)
+- [x] `internal/messaging/service.go` — NotificationService: enqueue helpers + Deliver dispatcher; implements `scheduling.Notifier` interface (NotifySessionsConfirmed, NotifySessionCancelled)
+- [x] `internal/messaging/worker.go` — background poll loop (15s interval, batch size 10, graceful shutdown via context)
+- [x] `internal/messaging/email.go` — added generic SendEmail method
+- [x] `scheduling.Notifier` interface added to scheduling package — thin interface keeping scheduling ↔ messaging decoupled
+- [x] `scheduling.Service.WithNotifier()` — attaches notifier post-construction; nil-safe (notifications are best-effort, never fail a booking)
+- [x] Scheduling service enqueues confirmations after `ConfirmScheduleRun` and cancellation notice after `CancelSession`
+- [x] Worker goroutine started in `main.go` with proper lifecycle (cancelled before DB pool closes)
+- [x] `POST /api/v1/webhooks/twilio` — already wired (Phase 3 SMS intake)
 
 ---
 
