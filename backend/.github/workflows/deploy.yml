@@ -28,6 +28,7 @@ jobs:
         with:
           go-version: "1.22"
           cache: true
+          cache-dependency-path: backend/go.sum
 
       - name: Run tests (gate before deploy)
         env:

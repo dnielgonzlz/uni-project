@@ -120,6 +120,10 @@ func (f *fakeSessionStore) ListConfirmedSessionsForCoachInRange(_ context.Contex
 }
 func (f *fakeSessionStore) ConfirmSessionsByRunID(_ context.Context, _ uuid.UUID) error { return nil }
 func (f *fakeSessionStore) CancelSessionsByRunID(_ context.Context, _ uuid.UUID) error  { return nil }
+func (f *fakeSessionStore) CancelSessionsByIDs(_ context.Context, _ []uuid.UUID) error  { return nil }
+func (f *fakeSessionStore) UpdateSessionTimes(_ context.Context, _ uuid.UUID, _, _ time.Time) (*Session, error) {
+	return nil, nil
+}
 func (f *fakeSessionStore) ListSessionsByCoach(_ context.Context, _ uuid.UUID, _ string) ([]Session, error) {
 	return nil, nil
 }
