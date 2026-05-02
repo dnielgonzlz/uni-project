@@ -109,20 +109,18 @@ func (s *Service) CreateSetupIntent(ctx context.Context, clientID uuid.UUID, ema
 // NOT ACTIVE: GoCardless application was rejected. See ErrGoCardlessNotAvailable.
 func (s *Service) CreateMandateFlow(ctx context.Context, clientID uuid.UUID, redirectURI string) (*MandateResponse, error) {
 	return nil, ErrGoCardlessNotAvailable
-
-	// --- Preserved implementation (unreachable until GoCardless account is approved) ---
-	//nolint:govet // intentional unreachable code kept for future use
-	sessionToken := clientID.String()
-	redirectURL, flowID, err := s.gc.CreateRedirectFlow(
-		ctx,
-		"PT Scheduler monthly training subscription",
-		redirectURI,
-		sessionToken,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("billing: create mandate flow: %w", err)
-	}
-	return &MandateResponse{RedirectURL: redirectURL, FlowID: flowID}, nil
+	// Preserved implementation — uncomment when GoCardless account is approved:
+	// sessionToken := clientID.String()
+	// redirectURL, flowID, err := s.gc.CreateRedirectFlow(
+	// 	ctx,
+	// 	"PT Scheduler monthly training subscription",
+	// 	redirectURI,
+	// 	sessionToken,
+	// )
+	// if err != nil {
+	// 	return nil, fmt.Errorf("billing: create mandate flow: %w", err)
+	// }
+	// return &MandateResponse{RedirectURL: redirectURL, FlowID: flowID}, nil
 }
 
 // CompleteMandateFlow finalises a GoCardless redirect flow and stores the mandate.
@@ -130,18 +128,16 @@ func (s *Service) CreateMandateFlow(ctx context.Context, clientID uuid.UUID, red
 // NOT ACTIVE: GoCardless application was rejected. See ErrGoCardlessNotAvailable.
 func (s *Service) CompleteMandateFlow(ctx context.Context, clientID uuid.UUID, flowID string) (*Mandate, error) {
 	return nil, ErrGoCardlessNotAvailable
-
-	// --- Preserved implementation (unreachable until GoCardless account is approved) ---
-	//nolint:govet // intentional unreachable code kept for future use
-	mandateID, err := s.gc.CompleteRedirectFlow(ctx, flowID, clientID.String())
-	if err != nil {
-		return nil, fmt.Errorf("billing: complete mandate: %w", err)
-	}
-	mandate, err := s.repo.UpsertMandate(ctx, clientID, mandateID, "active")
-	if err != nil {
-		return nil, fmt.Errorf("billing: store mandate: %w", err)
-	}
-	return mandate, nil
+	// Preserved implementation — uncomment when GoCardless account is approved:
+	// mandateID, err := s.gc.CompleteRedirectFlow(ctx, flowID, clientID.String())
+	// if err != nil {
+	// 	return nil, fmt.Errorf("billing: complete mandate: %w", err)
+	// }
+	// mandate, err := s.repo.UpsertMandate(ctx, clientID, mandateID, "active")
+	// if err != nil {
+	// 	return nil, fmt.Errorf("billing: store mandate: %w", err)
+	// }
+	// return mandate, nil
 }
 
 // --- Monthly billing ---
@@ -205,26 +201,24 @@ func (s *Service) chargeStripe(ctx context.Context, p *Payment) error {
 // NOT ACTIVE: GoCardless application was rejected. See ErrGoCardlessNotAvailable.
 func (s *Service) chargeGoCardless(ctx context.Context, p *Payment) error {
 	return ErrGoCardlessNotAvailable
-
-	// --- Preserved implementation (unreachable until GoCardless account is approved) ---
-	//nolint:govet // intentional unreachable code kept for future use
-	mandate, err := s.repo.GetMandateByClientID(ctx, p.ClientID)
-	if err != nil {
-		return fmt.Errorf("billing: get mandate: %w", err)
-	}
-	chargeDate := BacsEarliestChargeDate(time.Now().UTC(), false)
-	_ = chargeDate
-	gcPaymentID, err := s.gc.CreatePayment(
-		ctx,
-		mandate.MandateID,
-		p.IdempotencyKey,
-		p.AmountPence,
-		fmt.Sprintf("PT training — %d/%02d", p.BillingYear, p.BillingMonth),
-	)
-	if err != nil {
-		return err
-	}
-	return s.repo.UpdatePaymentStatus(ctx, p.ID, PaymentStatusPending, &gcPaymentID)
+	// Preserved implementation — uncomment when GoCardless account is approved:
+	// mandate, err := s.repo.GetMandateByClientID(ctx, p.ClientID)
+	// if err != nil {
+	// 	return fmt.Errorf("billing: get mandate: %w", err)
+	// }
+	// chargeDate := BacsEarliestChargeDate(time.Now().UTC(), false)
+	// _ = chargeDate
+	// gcPaymentID, err := s.gc.CreatePayment(
+	// 	ctx,
+	// 	mandate.MandateID,
+	// 	p.IdempotencyKey,
+	// 	p.AmountPence,
+	// 	fmt.Sprintf("PT training — %d/%02d", p.BillingYear, p.BillingMonth),
+	// )
+	// if err != nil {
+	// 	return err
+	// }
+	// return s.repo.UpdatePaymentStatus(ctx, p.ID, PaymentStatusPending, &gcPaymentID)
 }
 
 // --- Webhook handlers ---
@@ -357,54 +351,44 @@ func timeFromUnix(unix int64) time.Time {
 // NOT ACTIVE: GoCardless application was rejected. See ErrGoCardlessNotAvailable.
 func (s *Service) HandleGoCardlessWebhook(ctx context.Context, rawBody []byte, sigHeader string) error {
 	return ErrGoCardlessNotAvailable
-
-	// --- Preserved implementation (unreachable until GoCardless account is approved) ---
-	//nolint:govet // intentional unreachable code kept for future use
-	if err := s.gc.VerifyWebhookSignature(rawBody, sigHeader); err != nil {
-		return err
-	}
-
-	var payload struct {
-		Events []struct {
-			ID           string `json:"id"`
-			ResourceType string `json:"resource_type"`
-			Action       string `json:"action"`
-			Links        struct {
-				Payment string `json:"payment"`
-				Mandate string `json:"mandate"`
-			} `json:"links"`
-		} `json:"events"`
-	}
-
-	if err := parseJSON(rawBody, &payload); err != nil {
-		return fmt.Errorf("billing: parse gc webhook: %w", err)
-	}
-
-	for _, ev := range payload.Events {
-		if err := s.repo.RecordWebhookEvent(ctx, ProviderGoCardless, ev.ID, rawBody); errors.Is(err, ErrDuplicateWebhook) {
-			continue
-		}
-
-		switch ev.ResourceType + "." + ev.Action {
-		case "payments.paid_out":
-			p, err := s.repo.GetPaymentByProviderRef(ctx, ProviderGoCardless, ev.Links.Payment)
-			if err == nil {
-				_ = s.repo.UpdatePaymentStatus(ctx, p.ID, PaymentStatusPaid, &ev.Links.Payment)
-			}
-
-		case "payments.failed", "payments.charged_back":
-			p, err := s.repo.GetPaymentByProviderRef(ctx, ProviderGoCardless, ev.Links.Payment)
-			if err == nil {
-				// FRONTEND: surface failed Direct Debit in coach dashboard
-				_ = s.repo.UpdatePaymentStatus(ctx, p.ID, PaymentStatusFailed, &ev.Links.Payment)
-				s.logger.WarnContext(ctx, "gocardless payment failed", "payment_id", p.ID, "action", ev.Action)
-				s.notifyPaymentFailed(ctx, p)
-			}
-
-		case "mandates.cancelled", "mandates.expired":
-			s.logger.WarnContext(ctx, "gocardless mandate cancelled/expired", "mandate_id", ev.Links.Mandate)
-		}
-	}
-
-	return nil
+	// Preserved implementation — uncomment when GoCardless account is approved:
+	// if err := s.gc.VerifyWebhookSignature(rawBody, sigHeader); err != nil {
+	// 	return err
+	// }
+	// var payload struct {
+	// 	Events []struct {
+	// 		ID           string `json:"id"`
+	// 		ResourceType string `json:"resource_type"`
+	// 		Action       string `json:"action"`
+	// 		Links        struct {
+	// 			Payment string `json:"payment"`
+	// 			Mandate string `json:"mandate"`
+	// 		} `json:"links"`
+	// 	} `json:"events"`
+	// }
+	// if err := parseJSON(rawBody, &payload); err != nil {
+	// 	return fmt.Errorf("billing: parse gc webhook: %w", err)
+	// }
+	// for _, ev := range payload.Events {
+	// 	if err := s.repo.RecordWebhookEvent(ctx, ProviderGoCardless, ev.ID, rawBody); errors.Is(err, ErrDuplicateWebhook) {
+	// 		continue
+	// 	}
+	// 	switch ev.ResourceType + "." + ev.Action {
+	// 	case "payments.paid_out":
+	// 		p, err := s.repo.GetPaymentByProviderRef(ctx, ProviderGoCardless, ev.Links.Payment)
+	// 		if err == nil {
+	// 			_ = s.repo.UpdatePaymentStatus(ctx, p.ID, PaymentStatusPaid, &ev.Links.Payment)
+	// 		}
+	// 	case "payments.failed", "payments.charged_back":
+	// 		p, err := s.repo.GetPaymentByProviderRef(ctx, ProviderGoCardless, ev.Links.Payment)
+	// 		if err == nil {
+	// 			_ = s.repo.UpdatePaymentStatus(ctx, p.ID, PaymentStatusFailed, &ev.Links.Payment)
+	// 			s.logger.WarnContext(ctx, "gocardless payment failed", "payment_id", p.ID, "action", ev.Action)
+	// 			s.notifyPaymentFailed(ctx, p)
+	// 		}
+	// 	case "mandates.cancelled", "mandates.expired":
+	// 		s.logger.WarnContext(ctx, "gocardless mandate cancelled/expired", "mandate_id", ev.Links.Mandate)
+	// 	}
+	// }
+	// return nil
 }
