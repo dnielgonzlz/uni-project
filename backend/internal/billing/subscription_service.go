@@ -281,9 +281,6 @@ func (s *SubscriptionService) RequestPlanChange(ctx context.Context, coachUserID
 		return nil, err
 	}
 
-	coachUser, err := s.users.GetClientByID(ctx, clientID) // reuse client to get coach userID
-	_ = coachUser
-
 	return s.repo.CreatePlanChange(ctx, &PlanChange{
 		SubscriptionID: existing.ID,
 		FromPlanID:     existing.PlanID,

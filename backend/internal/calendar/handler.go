@@ -139,7 +139,7 @@ func (h *Handler) buildURL(token uuid.UUID) string {
 	base := fmt.Sprintf("http://localhost:%s", h.cfg.Port)
 	if h.cfg.Env == "production" {
 		// FRONTEND: replace with the real production base URL.
-		base = fmt.Sprintf("https://api.pt-scheduler.io")
+		base = "https://api.pt-scheduler.io"
 	}
 	return fmt.Sprintf("%s/calendar/%s.ics", base, token.String())
 }

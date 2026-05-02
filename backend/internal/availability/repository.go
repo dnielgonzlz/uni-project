@@ -50,7 +50,7 @@ func (r *Repository) ReplaceWorkingHours(ctx context.Context, coachID uuid.UUID,
 	if err != nil {
 		return nil, fmt.Errorf("availability: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `DELETE FROM trainer_working_hours WHERE coach_id = $1`, coachID); err != nil {
 		return nil, fmt.Errorf("availability: delete working hours: %w", err)
@@ -132,7 +132,7 @@ func (r *Repository) UpsertTwilioWindows(ctx context.Context, clientID interface
 	if err != nil {
 		return nil, fmt.Errorf("availability: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM client_preferred_windows WHERE client_id = $1 AND source = $2`,
@@ -172,7 +172,7 @@ func (r *Repository) ReplacePreferredWindows(ctx context.Context, clientID uuid.
 	if err != nil {
 		return nil, fmt.Errorf("availability: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Only replace manually-set windows; preserve SMS-sourced ones.
 	if _, err := tx.Exec(ctx,

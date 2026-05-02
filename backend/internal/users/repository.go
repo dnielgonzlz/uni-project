@@ -255,7 +255,7 @@ func (r *Repository) SoftDeleteClientForCoach(ctx context.Context, coachID, clie
 	if err != nil {
 		return fmt.Errorf("users: begin delete client tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ownershipQ = `
 		SELECT user_id

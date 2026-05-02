@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -716,12 +715,3 @@ func toSolverSessions(sessions []Session) []SolverSession {
 	return ss
 }
 
-// weeklySessionCount divides monthly sessions evenly across 4 weeks.
-func weeklySessionCount(sessionsPerMonth int) int {
-	_ = strconv.Itoa // silence import if unused
-	wc := sessionsPerMonth / 4
-	if wc < 1 {
-		return 1
-	}
-	return wc
-}
