@@ -1,0 +1,24 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#0D3349"/>
+  <!-- Dumbbell bar - split either side of clock -->
+  <rect x="72" y="246" width="136" height="24" rx="12" fill="#ffffff"/>
+  <rect x="304" y="246" width="136" height="24" rx="12" fill="#ffffff"/>
+  <!-- Left weight plates -->
+  <rect x="36" y="196" width="48" height="120" rx="14" fill="#ffffff" opacity="0.9"/>
+  <rect x="12" y="210" width="28" height="92" rx="12" fill="#ffffff" opacity="0.55"/>
+  <!-- Right weight plates -->
+  <rect x="428" y="196" width="48" height="120" rx="14" fill="#ffffff" opacity="0.9"/>
+  <rect x="472" y="210" width="28" height="92" rx="12" fill="#ffffff" opacity="0.55"/>
+  <!-- Clock face - centred -->
+  <circle cx="256" cy="258" r="80" fill="#0D3349" stroke="#4ECDC4" stroke-width="9"/>
+  <!-- Clock tick marks -->
+  <line x1="256" y1="190" x2="256" y2="204" stroke="#4ECDC4" stroke-width="5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="256" y1="312" x2="256" y2="326" stroke="#4ECDC4" stroke-width="5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="188" y1="258" x2="202" y2="258" stroke="#4ECDC4" stroke-width="5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="310" y1="258" x2="324" y2="258" stroke="#4ECDC4" stroke-width="5" stroke-linecap="round" opacity="0.5"/>
+  <!-- Clock hands -->
+  <line x1="256" y1="258" x2="256" y2="220" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+  <line x1="256" y1="258" x2="290" y2="258" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+  <!-- Centre dot -->
+  <circle cx="256" cy="258" r="9" fill="#4ECDC4"/>
+</svg>

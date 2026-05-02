@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Lint, vet & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pttest
+          POSTGRES_PASSWORD: pttest
+          POSTGRES_DB: pt_scheduler_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pttest"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Used by unit tests and integration tests
+      DATABASE_URL: postgres://pttest:pttest@localhost:5432/pt_scheduler_test?sslmode=disable
+      JWT_SECRET: ci-test-secret-at-least-32-characters-long
+      JWT_ACCESS_EXPIRY_MIN: "15"
+      JWT_REFRESH_EXPIRY_DAYS: "7"
+      PASSWORD_RESET_EXPIRY_MIN: "60"
+      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      RESEND_API_KEY: re_test_placeholder
+      RESEND_FROM_ADDRESS: test@example.com
+      TWILIO_ACCOUNT_SID: ACtest
+      TWILIO_AUTH_TOKEN: test
+      TWILIO_FROM_NUMBER: "+441234567890"
+      MESSAGING_CHANNEL: sms
+      STRIPE_SECRET_KEY: sk_test_placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_placeholder
+      # GoCardless fields are optional — application was rejected, integration not active.
+      GOCARDLESS_ACCESS_TOKEN: ""
+      GOCARDLESS_WEBHOOK_SECRET: ""
+      GOCARDLESS_ENV: sandbox
+      SOLVER_URL: http://localhost:8000
+      SOLVER_TIMEOUT_SECONDS: "30"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Verify module integrity
+        run: go mod verify
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Run migrations for integration tests
+        run: |
+          curl -sSL https://github.com/golang-migrate/migrate/releases/download/v4.17.0/migrate.linux-amd64.tar.gz | tar xz
+          ./migrate -path ./migrations -database "$DATABASE_URL" up
+
+      - name: Run unit tests
+        run: go test -race -count=1 $(go list ./... | grep -v /integration)
+
+      - name: Run integration tests
+        # testcontainers spins its own Docker containers — Docker is available on ubuntu-latest.
+        run: go test -race -count=1 -tags integration -timeout 120s ./internal/integration/
+
+      - name: Build
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/api
