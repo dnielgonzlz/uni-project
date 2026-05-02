@@ -110,7 +110,7 @@ export default function SessionCard({ session, counterpartName, actions, editabl
         {actions}
         {showEdit && (
           <Dialog open={open} onOpenChange={handleOpen}>
-            <DialogTrigger asChild>
+            <DialogTrigger>
               <Button size="sm" variant="outline" className="gap-1.5">
                 <Pencil className="h-3.5 w-3.5" />
                 Edit
@@ -153,7 +153,7 @@ export default function SessionCard({ session, counterpartName, actions, editabl
                       <Button onClick={handleSave} disabled={update.isPending || cancel.isPending}>
                         {update.isPending ? 'Saving…' : 'Save changes'}
                       </Button>
-                      <DialogClose asChild>
+                      <DialogClose>
                         <Button variant="outline" disabled={update.isPending}>Close</Button>
                       </DialogClose>
                     </div>

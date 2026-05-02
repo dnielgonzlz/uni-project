@@ -43,7 +43,7 @@ function SubscriptionSection({ clientId }: { clientId: string }) {
         <p className="text-sm text-slate-500">No subscription assigned.</p>
         {activePlans.length > 0 && (
           <div className="flex items-center gap-2">
-            <Select value={selectedPlanId} onValueChange={setSelectedPlanId}>
+            <Select value={selectedPlanId} onValueChange={(v) => v !== null && setSelectedPlanId(v)}>
               <SelectTrigger className="w-48 h-8 text-xs">
                 <SelectValue placeholder="Select plan…" />
               </SelectTrigger>
@@ -102,7 +102,7 @@ function SubscriptionSection({ clientId }: { clientId: string }) {
       {otherPlans.length > 0 && (
         <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
           <span className="text-xs text-slate-500">Request plan change:</span>
-          <Select value={newPlanId} onValueChange={setNewPlanId}>
+          <Select value={newPlanId} onValueChange={(v) => v !== null && setNewPlanId(v)}>
             <SelectTrigger className="w-40 h-7 text-xs">
               <SelectValue placeholder="New plan…" />
             </SelectTrigger>

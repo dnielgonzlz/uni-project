@@ -113,7 +113,7 @@ function CardSetupTab() {
         {verified.length === 0 ? (
           <p className="text-sm text-slate-500">No verified clients yet.</p>
         ) : (
-          <Select value={selectedId} onValueChange={handleSelect}>
+          <Select value={selectedId} onValueChange={(v) => v !== null && handleSelect(v)}>
             <SelectTrigger className="w-full"><SelectValue placeholder="Select a client…" /></SelectTrigger>
             <SelectContent>
               {verified.map((c) => (

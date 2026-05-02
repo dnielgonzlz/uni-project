@@ -19,7 +19,6 @@ export const Route = createFileRoute('/dashboard/availability')({
 
 function AvailabilityPage() {
   const profileId = useAuthStore((s) => s.profileId) ?? ''
-  const user = useAuthStore((s) => s.user)
 
   const { data: availData, isLoading: availLoading } = useCoachAvailability(profileId)
   const { data: profile, isLoading: profileLoading } = useCoachProfile(profileId)
