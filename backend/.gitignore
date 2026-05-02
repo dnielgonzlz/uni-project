@@ -1,5 +1,9 @@
-# Environment — never commit real credentials
+# Environment 
 .env
+.cursor/
+.claude/
+CLAUDE.md
+
 
 # Compiled binaries
 dist/
