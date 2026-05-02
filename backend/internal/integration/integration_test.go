@@ -47,6 +47,12 @@ func TestMain(m *testing.M) {
 			"../../migrations/000002_outbox.up.sql",
 			"../../migrations/000003_pending_cancellation.up.sql",
 			"../../migrations/000004_calendar_token.up.sql",
+			"../../migrations/000005_agent_settings.up.sql",
+			"../../migrations/000006_agent_campaigns.up.sql",
+			"../../migrations/000007_parse_status.up.sql",
+			"../../migrations/000008_coach_max_sessions.up.sql",
+			"../../migrations/000009_email_verification.up.sql",
+			"../../migrations/000010_subscriptions.up.sql",
 		),
 		testcontainers.WithAdditionalWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
