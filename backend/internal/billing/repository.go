@@ -45,7 +45,7 @@ func (r *Repository) CreatePayment(ctx context.Context, p *Payment) (*Payment, e
 	)
 	result, err := scanPayment(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrAlreadyPaid
+		return nil, nil
 	}
 	return result, err
 }

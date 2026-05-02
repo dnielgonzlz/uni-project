@@ -159,12 +159,12 @@ func (s *Service) ChargeMonthly(ctx context.Context, clientID uuid.UUID, provide
 	}
 
 	created, err := s.repo.CreatePayment(ctx, payment)
-	if errors.Is(err, ErrAlreadyPaid) {
-		s.logger.InfoContext(ctx, "payment already exists, skipping", "client_id", clientID, "year", year, "month", month)
-		return nil, ErrAlreadyPaid
-	}
 	if err != nil {
 		return nil, fmt.Errorf("billing: create payment record: %w", err)
+	}
+	if created == nil {
+		s.logger.InfoContext(ctx, "payment already exists, skipping", "client_id", clientID, "year", year, "month", month)
+		return nil, ErrAlreadyPaid
 	}
 
 	switch provider {
