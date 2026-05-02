@@ -7,15 +7,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/danielgonzalez/pt-scheduler/internal/platform/ctxkeys"
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/httpx"
-)
-
-// contextKey is an unexported type for context keys in this package.
-type contextKey string
-
-const (
-	contextKeyUserID contextKey = "user_id"
-	contextKeyRole   contextKey = "role"
 )
 
 // Middleware returns an HTTP middleware that validates the Bearer JWT on each request.
@@ -37,8 +30,8 @@ func Middleware(jwtSecret string) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), contextKeyUserID, claims.UserID)
-			ctx = context.WithValue(ctx, contextKeyRole, claims.Role)
+			ctx := context.WithValue(r.Context(), ctxkeys.UserIDKey, claims.UserID)
+			ctx = context.WithValue(ctx, ctxkeys.RoleKey, claims.Role)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -54,7 +47,7 @@ func RequireRole(roles ...string) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			role, ok := r.Context().Value(contextKeyRole).(string)
+			role, ok := r.Context().Value(ctxkeys.RoleKey).(string)
 			if !ok {
 				httpx.Error(w, http.StatusForbidden, "forbidden")
 				return
@@ -72,12 +65,12 @@ func RequireRole(roles ...string) func(http.Handler) http.Handler {
 // UserIDFromContext extracts the authenticated user's UUID from the request context.
 // Returns the zero UUID and false if not set.
 func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	id, ok := ctx.Value(contextKeyUserID).(uuid.UUID)
+	id, ok := ctx.Value(ctxkeys.UserIDKey).(uuid.UUID)
 	return id, ok
 }
 
 // RoleFromContext extracts the authenticated user's role from the request context.
 func RoleFromContext(ctx context.Context) (string, bool) {
-	role, ok := ctx.Value(contextKeyRole).(string)
+	role, ok := ctx.Value(ctxkeys.RoleKey).(string)
 	return role, ok
 }

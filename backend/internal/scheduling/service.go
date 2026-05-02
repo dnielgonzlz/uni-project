@@ -16,6 +16,43 @@ import (
 	"github.com/danielgonzalez/pt-scheduler/internal/users"
 )
 
+// sessionStore is the subset of Repository methods used by Service.
+// Defining it as an interface allows the service to be tested with fakes.
+type sessionStore interface {
+	CreateScheduleRun(ctx context.Context, coachID uuid.UUID, weekStart time.Time, input json.RawMessage) (*ScheduleRun, error)
+	GetScheduleRunByID(ctx context.Context, id uuid.UUID) (*ScheduleRun, error)
+	UpdateScheduleRunStatus(ctx context.Context, id uuid.UUID, status string, output json.RawMessage) (*ScheduleRun, error)
+	CreateSession(ctx context.Context, s *Session) (*Session, error)
+	ListActiveSessionsByRunID(ctx context.Context, runID uuid.UUID) ([]Session, error)
+	ListConfirmedSessionsForCoachInRange(ctx context.Context, coachID uuid.UUID, from, to time.Time) ([]Session, error)
+	ConfirmSessionsByRunID(ctx context.Context, runID uuid.UUID) error
+	CancelSessionsByRunID(ctx context.Context, runID uuid.UUID) error
+	CancelSessionsByIDs(ctx context.Context, ids []uuid.UUID) error
+	UpdateSessionTimes(ctx context.Context, id uuid.UUID, startsAt, endsAt time.Time) (*Session, error)
+	ListSessionsByCoach(ctx context.Context, coachID uuid.UUID, status string) ([]Session, error)
+	ListSessionsByClient(ctx context.Context, clientID uuid.UUID, status string) ([]Session, error)
+	GetSessionByID(ctx context.Context, id uuid.UUID) (*Session, error)
+	UpdateSessionStatus(ctx context.Context, id uuid.UUID, status string) (*Session, error)
+	RequestCancellation(ctx context.Context, id uuid.UUID, reason string, requestedAt time.Time) (*Session, error)
+	CreateSessionCredit(ctx context.Context, clientID, sourceSessionID uuid.UUID, reason string, expiresAt time.Time) (*SessionCredit, error)
+}
+
+// userLookup is the subset of users.Repository methods used by Service.
+type userLookup interface {
+	GetClientsByCoachID(ctx context.Context, coachID uuid.UUID) ([]users.Client, error)
+	GetCoachByID(ctx context.Context, coachID uuid.UUID) (*users.Coach, error)
+	GetCoachByUserID(ctx context.Context, userID uuid.UUID) (*users.Coach, error)
+	GetClientByID(ctx context.Context, clientID uuid.UUID) (*users.Client, error)
+	GetClientByUserID(ctx context.Context, userID uuid.UUID) (*users.Client, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (*users.User, error)
+}
+
+// availLookup is the subset of availability.Repository methods used by Service.
+type availLookup interface {
+	GetWorkingHours(ctx context.Context, coachID uuid.UUID) ([]availability.WorkingHours, error)
+	GetPreferredWindows(ctx context.Context, clientID uuid.UUID) ([]availability.PreferredWindow, error)
+}
+
 // ErrInfeasible is returned when the solver cannot find any valid schedule.
 var ErrInfeasible = errors.New("no feasible schedule found for the given constraints")
 
@@ -30,6 +67,7 @@ var ErrForbidden = errors.New("forbidden")
 type Notifier interface {
 	NotifySessionsConfirmed(ctx context.Context, sessions []SessionNotifPayload) error
 	NotifySessionCancelled(ctx context.Context, p CancelNotifPayload) error
+	NotifyCancellationPending(ctx context.Context, p PendingCancellationNotifPayload) error
 }
 
 // SessionNotifPayload carries the data the notification service needs to
@@ -57,11 +95,25 @@ type CancelNotifPayload struct {
 	CreditIssued bool
 }
 
+// PendingCancellationNotifPayload carries data sent to the coach when a client
+// requests cancellation inside the 24h window and the coach must decide.
+type PendingCancellationNotifPayload struct {
+	SessionID          uuid.UUID
+	ClientID           uuid.UUID
+	CoachID            uuid.UUID
+	StartsAt           time.Time
+	ClientName         string
+	CancellationReason string
+	CoachName          string
+	CoachEmail         string
+	CoachPhone         string
+}
+
 // Service handles session booking, schedule runs, and session credits.
 type Service struct {
-	repo      *Repository
-	usersRepo *users.Repository
-	availRepo *availability.Repository
+	repo      sessionStore
+	usersRepo userLookup
+	availRepo availLookup
 	solver    Solver
 	clock     clock.Clock
 	db        *pgxpool.Pool
@@ -69,9 +121,9 @@ type Service struct {
 }
 
 func NewService(
-	repo *Repository,
-	usersRepo *users.Repository,
-	availRepo *availability.Repository,
+	repo sessionStore,
+	usersRepo userLookup,
+	availRepo availLookup,
 	solver Solver,
 	clk clock.Clock,
 	db *pgxpool.Pool,
@@ -93,7 +145,14 @@ func (s *Service) WithNotifier(n Notifier) {
 }
 
 // TriggerScheduleRun loads coach/client data, calls the solver, and persists proposed sessions.
-func (s *Service) TriggerScheduleRun(ctx context.Context, coachID uuid.UUID, req TriggerRunRequest) (*ScheduleRun, error) {
+func (s *Service) TriggerScheduleRun(ctx context.Context, coachUserID uuid.UUID, req TriggerRunRequest) (*ScheduleRun, error) {
+	// Resolve the JWT user UUID to the coach profile UUID used in all FK relations.
+	coachRec, err := s.usersRepo.GetCoachByUserID(ctx, coachUserID)
+	if err != nil {
+		return nil, fmt.Errorf("scheduling: resolve coach: %w", err)
+	}
+	coachID := coachRec.ID
+
 	weekStart, err := time.Parse("2006-01-02", req.WeekStart)
 	if err != nil {
 		return nil, fmt.Errorf("scheduling: parse week_start: %w", err)
@@ -129,8 +188,9 @@ func (s *Service) TriggerScheduleRun(ctx context.Context, coachID uuid.UUID, req
 	solverReq := SolverRequest{
 		WeekStart: req.WeekStart,
 		Coach: SolverCoach{
-			ID:           coachID.String(),
-			WorkingHours: toSolverTimeSlots(workingHours),
+			ID:                coachID.String(),
+			WorkingHours:      toSolverTimeSlots(workingHours),
+			MaxSessionsPerDay: coachRec.MaxSessionsPerDay,
 		},
 		ExistingSessions: toSolverSessions(existingSessions),
 	}
@@ -228,8 +288,15 @@ func (s *Service) GetScheduleRun(ctx context.Context, runID uuid.UUID) (*Schedul
 	return run, nil
 }
 
-// ConfirmScheduleRun confirms all proposed sessions in a run in a single transaction.
-func (s *Service) ConfirmScheduleRun(ctx context.Context, coachID, runID uuid.UUID) (*ScheduleRun, error) {
+// ConfirmScheduleRun confirms proposed sessions in a run. Sessions whose IDs appear in
+// excludedIDs are cancelled instead of confirmed, allowing partial confirmation.
+func (s *Service) ConfirmScheduleRun(ctx context.Context, coachUserID, runID uuid.UUID, excludedIDs []uuid.UUID) (*ScheduleRun, error) {
+	coachRec, err := s.usersRepo.GetCoachByUserID(ctx, coachUserID)
+	if err != nil {
+		return nil, ErrForbidden
+	}
+	coachID := coachRec.ID
+
 	run, err := s.repo.GetScheduleRunByID(ctx, runID)
 	if err != nil {
 		return nil, err
@@ -239,6 +306,13 @@ func (s *Service) ConfirmScheduleRun(ctx context.Context, coachID, runID uuid.UU
 	}
 	if run.Status != RunPendingConfirmation {
 		return nil, ErrRunNotPending
+	}
+
+	// Cancel excluded sessions before confirming the rest.
+	if len(excludedIDs) > 0 {
+		if err := s.repo.CancelSessionsByIDs(ctx, excludedIDs); err != nil {
+			return nil, fmt.Errorf("scheduling: cancel excluded sessions: %w", err)
+		}
 	}
 
 	if err := s.repo.ConfirmSessionsByRunID(ctx, runID); err != nil {
@@ -252,11 +326,16 @@ func (s *Service) ConfirmScheduleRun(ctx context.Context, coachID, runID uuid.UU
 
 	run.Sessions, _ = s.repo.ListActiveSessionsByRunID(ctx, runID)
 
-	// Enqueue notifications for every confirmed session (non-fatal if it fails).
+	// Enqueue notifications for confirmed sessions only (non-fatal if it fails).
 	if s.notifier != nil && len(run.Sessions) > 0 {
-		if payloads, err := s.buildSessionNotifPayloads(ctx, coachID, run.Sessions); err == nil {
+		confirmed := make([]Session, 0, len(run.Sessions))
+		for _, sess := range run.Sessions {
+			if sess.Status == StatusConfirmed {
+				confirmed = append(confirmed, sess)
+			}
+		}
+		if payloads, err := s.buildSessionNotifPayloads(ctx, coachID, confirmed); err == nil {
 			if err := s.notifier.NotifySessionsConfirmed(ctx, payloads); err != nil {
-				// Notifications are best-effort — don't fail the confirmation.
 				_ = err
 			}
 		}
@@ -265,8 +344,46 @@ func (s *Service) ConfirmScheduleRun(ctx context.Context, coachID, runID uuid.UU
 	return run, nil
 }
 
+// UpdateSession reschedules a confirmed session to new start/end times.
+// Only the owning coach can call this.
+func (s *Service) UpdateSession(ctx context.Context, coachUserID, sessionID uuid.UUID, req UpdateSessionRequest) (*Session, error) {
+	session, err := s.repo.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.assertIsCoachForSession(ctx, coachUserID, session); err != nil {
+		return nil, err
+	}
+
+	if session.Status != StatusConfirmed {
+		return nil, &ConstraintError{Code: "invalid_status", Message: "only confirmed sessions can be rescheduled"}
+	}
+
+	startsAt, err := time.Parse(time.RFC3339, req.StartsAt)
+	if err != nil {
+		return nil, &ConstraintError{Code: "invalid_starts_at", Message: "starts_at must be a valid RFC3339 timestamp"}
+	}
+	endsAt, err := time.Parse(time.RFC3339, req.EndsAt)
+	if err != nil {
+		return nil, &ConstraintError{Code: "invalid_ends_at", Message: "ends_at must be a valid RFC3339 timestamp"}
+	}
+
+	if !endsAt.After(startsAt) {
+		return nil, &ConstraintError{Code: "invalid_times", Message: "ends_at must be after starts_at"}
+	}
+
+	return s.repo.UpdateSessionTimes(ctx, sessionID, startsAt, endsAt)
+}
+
 // RejectScheduleRun cancels all proposed sessions and marks the run as rejected.
-func (s *Service) RejectScheduleRun(ctx context.Context, coachID, runID uuid.UUID) (*ScheduleRun, error) {
+func (s *Service) RejectScheduleRun(ctx context.Context, coachUserID, runID uuid.UUID) (*ScheduleRun, error) {
+	coachRec, err := s.usersRepo.GetCoachByUserID(ctx, coachUserID)
+	if err != nil {
+		return nil, ErrForbidden
+	}
+	coachID := coachRec.ID
+
 	run, err := s.repo.GetScheduleRunByID(ctx, runID)
 	if err != nil {
 		return nil, err
@@ -291,69 +408,233 @@ func (s *Service) RejectScheduleRun(ctx context.Context, coachID, runID uuid.UUI
 }
 
 // ListSessions returns sessions for a coach (all clients) or a specific client.
-func (s *Service) ListSessions(ctx context.Context, coachID *uuid.UUID, clientID *uuid.UUID, status string) ([]Session, error) {
-	if coachID != nil {
-		return s.repo.ListSessionsByCoach(ctx, *coachID, status)
+// coachUserID and clientUserID are users.id values from the JWT; this function
+// resolves them to the correct FK UUIDs before querying.
+func (s *Service) ListSessions(ctx context.Context, coachUserID *uuid.UUID, clientUserID *uuid.UUID, status string) ([]Session, error) {
+	if coachUserID != nil {
+		coach, err := s.usersRepo.GetCoachByUserID(ctx, *coachUserID)
+		if err != nil {
+			return nil, fmt.Errorf("scheduling: resolve coach: %w", err)
+		}
+		return s.repo.ListSessionsByCoach(ctx, coach.ID, status)
 	}
-	if clientID != nil {
-		return s.repo.ListSessionsByClient(ctx, *clientID, status)
+	if clientUserID != nil {
+		client, err := s.usersRepo.GetClientByUserID(ctx, *clientUserID)
+		if err != nil {
+			return nil, fmt.Errorf("scheduling: resolve client: %w", err)
+		}
+		return s.repo.ListSessionsByClient(ctx, client.ID, status)
 	}
 	return nil, fmt.Errorf("scheduling: list sessions requires coachID or clientID")
 }
 
-// CancelSession cancels a session and issues a credit if enough notice was given.
-func (s *Service) CancelSession(ctx context.Context, sessionID uuid.UUID, req CancelSessionRequest) (*Session, *SessionCredit, error) {
+// CancelSession handles a cancellation request from a client.
+//
+// Outside the 24h window: immediately cancels and issues a session credit.
+// Inside the 24h window:  moves to "pending_cancellation" and notifies the coach,
+// who must approve (session lost) or waive (credit issued) via separate endpoints.
+func (s *Service) CancelSession(ctx context.Context, sessionID uuid.UUID, req CancelSessionRequest) (*CancelSessionResponse, error) {
 	session, err := s.repo.GetSessionByID(ctx, sessionID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if session.Status != StatusProposed && session.Status != StatusConfirmed {
-		return nil, nil, &ConstraintError{
+		return nil, &ConstraintError{
 			Code:    "invalid_status",
 			Message: "only proposed or confirmed sessions can be cancelled",
 		}
 	}
 
 	now := s.clock.Now()
+	withinWindow := !CancellationEarnsCredit(session.StartsAt, now)
+
+	// --- Inside 24h window: request pending coach review ---
+	if withinWindow {
+		pending, err := s.repo.RequestCancellation(ctx, sessionID, req.Reason, now)
+		if err != nil {
+			return nil, fmt.Errorf("scheduling: request cancellation: %w", err)
+		}
+
+		// Notify the coach (non-fatal).
+		if s.notifier != nil {
+			s.notifyCoachPendingCancellation(ctx, pending, req.Reason)
+		}
+
+		return &CancelSessionResponse{
+			Session:      pending,
+			WithinWindow: true,
+			Message:      "Your cancellation request has been sent to your coach. Because it is within 24 hours of the session, they will decide whether the session is waived or lost.",
+		}, nil
+	}
+
+	// --- Outside 24h window: cancel immediately with credit ---
 	cancelled, err := s.repo.UpdateSessionStatus(ctx, sessionID, StatusCancelled)
 	if err != nil {
-		return nil, nil, fmt.Errorf("scheduling: cancel session: %w", err)
+		return nil, fmt.Errorf("scheduling: cancel session: %w", err)
 	}
 
-	// Issue credit if sufficient notice was given
-	var credit *SessionCredit
-	if CancellationEarnsCredit(session.StartsAt, now) {
-		expiresAt := now.AddDate(0, 1, 0) // credit expires in 1 month
-		credit, err = s.repo.CreateSessionCredit(ctx, session.ClientID, sessionID, req.Reason, expiresAt)
-		if err != nil {
-			// Non-fatal: session is cancelled, credit issuance failure is logged but not returned
-			_ = err
-		}
+	expiresAt := now.AddDate(0, 1, 0)
+	credit, err := s.repo.CreateSessionCredit(ctx, session.ClientID, sessionID, req.Reason, expiresAt)
+	if err != nil {
+		credit = nil
 	}
 
-	// Enqueue cancellation notification (non-fatal).
 	if s.notifier != nil {
-		if client, err := s.usersRepo.GetClientByID(ctx, session.ClientID); err == nil {
-			if clientUser, err := s.usersRepo.GetUserByID(ctx, client.UserID); err == nil {
-				phone := ""
-				if clientUser.PhoneE164 != nil {
-					phone = *clientUser.PhoneE164
-				}
-				_ = s.notifier.NotifySessionCancelled(ctx, CancelNotifPayload{
-					SessionID:    session.ID,
-					ClientID:     session.ClientID,
-					StartsAt:     session.StartsAt,
-					ClientName:   clientUser.FullName,
-					ClientEmail:  clientUser.Email,
-					ClientPhone:  phone,
-					CreditIssued: credit != nil,
-				})
-			}
+		s.notifyClientCancelled(ctx, cancelled, credit != nil)
+	}
+
+	return &CancelSessionResponse{
+		Session:      cancelled,
+		Credit:       credit,
+		WithinWindow: false,
+		Message:      "Session cancelled. A credit has been added to your account.",
+	}, nil
+}
+
+// ApproveCancellation is called by the coach to confirm the client loses the session.
+// The session is cancelled and no credit is issued.
+func (s *Service) ApproveCancellation(ctx context.Context, coachUserID, sessionID uuid.UUID) (*Session, error) {
+	session, err := s.repo.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if session.Status != StatusPendingCancellation {
+		return nil, &ConstraintError{
+			Code:    "invalid_status",
+			Message: "session is not awaiting cancellation review",
 		}
+	}
+
+	if err := s.assertIsCoachForSession(ctx, coachUserID, session); err != nil {
+		return nil, err
+	}
+
+	cancelled, err := s.repo.UpdateSessionStatus(ctx, sessionID, StatusCancelled)
+	if err != nil {
+		return nil, fmt.Errorf("scheduling: approve cancellation: %w", err)
+	}
+
+	// Notify client: session lost, no credit.
+	if s.notifier != nil {
+		s.notifyClientCancelled(ctx, cancelled, false)
+	}
+
+	return cancelled, nil
+}
+
+// WaiveCancellation is called by the coach to waive the 24h policy.
+// The session is cancelled and a session credit is issued to the client.
+func (s *Service) WaiveCancellation(ctx context.Context, coachUserID, sessionID uuid.UUID) (*Session, *SessionCredit, error) {
+	session, err := s.repo.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if session.Status != StatusPendingCancellation {
+		return nil, nil, &ConstraintError{
+			Code:    "invalid_status",
+			Message: "session is not awaiting cancellation review",
+		}
+	}
+
+	if err := s.assertIsCoachForSession(ctx, coachUserID, session); err != nil {
+		return nil, nil, err
+	}
+
+	cancelled, err := s.repo.UpdateSessionStatus(ctx, sessionID, StatusCancelled)
+	if err != nil {
+		return nil, nil, fmt.Errorf("scheduling: waive cancellation: %w", err)
+	}
+
+	reason := ""
+	if session.CancellationReason != nil {
+		reason = *session.CancellationReason
+	}
+	expiresAt := s.clock.Now().AddDate(0, 1, 0)
+	credit, err := s.repo.CreateSessionCredit(ctx, session.ClientID, sessionID, reason, expiresAt)
+	if err != nil {
+		credit = nil
+	}
+
+	if s.notifier != nil {
+		s.notifyClientCancelled(ctx, cancelled, credit != nil)
 	}
 
 	return cancelled, credit, nil
+}
+
+// --- private notification helpers ---
+
+func (s *Service) notifyCoachPendingCancellation(ctx context.Context, session *Session, reason string) {
+	coach, err := s.usersRepo.GetCoachByID(ctx, session.CoachID)
+	if err != nil {
+		return
+	}
+	coachUser, err := s.usersRepo.GetUserByID(ctx, coach.UserID)
+	if err != nil {
+		return
+	}
+	client, err := s.usersRepo.GetClientByID(ctx, session.ClientID)
+	if err != nil {
+		return
+	}
+	clientUser, err := s.usersRepo.GetUserByID(ctx, client.UserID)
+	if err != nil {
+		return
+	}
+	coachPhone := ""
+	if coachUser.PhoneE164 != nil {
+		coachPhone = *coachUser.PhoneE164
+	}
+	_ = s.notifier.NotifyCancellationPending(ctx, PendingCancellationNotifPayload{
+		SessionID:          session.ID,
+		ClientID:           session.ClientID,
+		CoachID:            session.CoachID,
+		StartsAt:           session.StartsAt,
+		ClientName:         clientUser.FullName,
+		CancellationReason: reason,
+		CoachName:          coachUser.FullName,
+		CoachEmail:         coachUser.Email,
+		CoachPhone:         coachPhone,
+	})
+}
+
+func (s *Service) notifyClientCancelled(ctx context.Context, session *Session, creditIssued bool) {
+	client, err := s.usersRepo.GetClientByID(ctx, session.ClientID)
+	if err != nil {
+		return
+	}
+	clientUser, err := s.usersRepo.GetUserByID(ctx, client.UserID)
+	if err != nil {
+		return
+	}
+	phone := ""
+	if clientUser.PhoneE164 != nil {
+		phone = *clientUser.PhoneE164
+	}
+	_ = s.notifier.NotifySessionCancelled(ctx, CancelNotifPayload{
+		SessionID:    session.ID,
+		ClientID:     session.ClientID,
+		StartsAt:     session.StartsAt,
+		ClientName:   clientUser.FullName,
+		ClientEmail:  clientUser.Email,
+		ClientPhone:  phone,
+		CreditIssued: creditIssued,
+	})
+}
+
+// assertIsCoachForSession checks that the given user ID maps to the coach on this session.
+func (s *Service) assertIsCoachForSession(ctx context.Context, coachUserID uuid.UUID, session *Session) error {
+	coach, err := s.usersRepo.GetCoachByUserID(ctx, coachUserID)
+	if err != nil {
+		return ErrForbidden
+	}
+	if coach.ID != session.CoachID {
+		return ErrForbidden
+	}
+	return nil
 }
 
 // --- helpers ---

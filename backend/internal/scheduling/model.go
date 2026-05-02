@@ -8,10 +8,11 @@ import (
 
 // Session statuses
 const (
-	StatusProposed  = "proposed"
-	StatusConfirmed = "confirmed"
-	StatusCancelled = "cancelled"
-	StatusCompleted = "completed"
+	StatusProposed            = "proposed"
+	StatusConfirmed           = "confirmed"
+	StatusCancelled           = "cancelled"
+	StatusCompleted           = "completed"
+	StatusPendingCancellation = "pending_cancellation"
 )
 
 // ScheduleRun statuses
@@ -24,16 +25,20 @@ const (
 
 // Session is a single booked 60-minute training session.
 type Session struct {
-	ID             uuid.UUID  `json:"id"`
-	CoachID        uuid.UUID  `json:"coach_id"`
-	ClientID       uuid.UUID  `json:"client_id"`
-	ScheduleRunID  *uuid.UUID `json:"schedule_run_id,omitempty"`
-	StartsAt       time.Time  `json:"starts_at"`
-	EndsAt         time.Time  `json:"ends_at"`
-	Status         string     `json:"status"`
-	Notes          *string    `json:"notes,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID                        uuid.UUID  `json:"id"`
+	CoachID                   uuid.UUID  `json:"coach_id"`
+	ClientID                  uuid.UUID  `json:"client_id"`
+	ScheduleRunID             *uuid.UUID `json:"schedule_run_id,omitempty"`
+	StartsAt                  time.Time  `json:"starts_at"`
+	EndsAt                    time.Time  `json:"ends_at"`
+	Status                    string     `json:"status"`
+	Notes                     *string    `json:"notes,omitempty"`
+	CancellationReason        *string    `json:"cancellation_reason,omitempty"`
+	CancellationRequestedAt   *time.Time `json:"cancellation_requested_at,omitempty"`
+	ClientName                *string    `json:"client_name,omitempty"`
+	CoachName                 *string    `json:"coach_name,omitempty"`
+	CreatedAt                 time.Time  `json:"created_at"`
+	UpdatedAt                 time.Time  `json:"updated_at"`
 }
 
 // ScheduleRun represents one invocation of the OR-Tools solver for a coach's week.
@@ -73,9 +78,34 @@ type CancelSessionRequest struct {
 	Reason string `json:"reason" validate:"required,max=500"`
 }
 
+// CancelSessionResponse is returned from POST /api/v1/sessions/{id}/cancel.
+// WithinWindow=true means the cancellation is pending coach approval.
+type CancelSessionResponse struct {
+	Session      *Session       `json:"session"`
+	Credit       *SessionCredit `json:"credit,omitempty"`
+	WithinWindow bool           `json:"within_24h_window"`
+	Message      string         `json:"message"`
+}
+
+// ReviewCancellationRequest is the body for the coach approve/waive endpoints.
+type ReviewCancellationRequest struct {
+	Notes string `json:"notes" validate:"omitempty,max=500"`
+}
+
 // ListSessionsFilter holds query parameters for GET /api/v1/sessions
 type ListSessionsFilter struct {
 	Status string // optional status filter
+}
+
+// ConfirmRunRequest is the optional body for POST /api/v1/schedule-runs/{runID}/confirm
+type ConfirmRunRequest struct {
+	ExcludedSessionIDs []string `json:"excluded_session_ids"` // UUIDs of sessions to skip (they are cancelled)
+}
+
+// UpdateSessionRequest is the body for PUT /api/v1/sessions/{sessionID}
+type UpdateSessionRequest struct {
+	StartsAt string `json:"starts_at" validate:"required"` // RFC3339
+	EndsAt   string `json:"ends_at" validate:"required"`   // RFC3339
 }
 
 // --- Solver wire types ---
@@ -89,8 +119,9 @@ type SolverRequest struct {
 }
 
 type SolverCoach struct {
-	ID           string              `json:"id"`
-	WorkingHours []SolverTimeSlot    `json:"working_hours"`
+	ID                string           `json:"id"`
+	WorkingHours      []SolverTimeSlot `json:"working_hours"`
+	MaxSessionsPerDay int              `json:"max_sessions_per_day"`
 }
 
 type SolverClient struct {

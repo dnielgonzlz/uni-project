@@ -67,6 +67,22 @@ func (n *NotificationService) NotifySessionCancelled(ctx context.Context, p sche
 	})
 }
 
+// NotifyCancellationPending implements scheduling.Notifier.
+// Called when a client cancels inside the 24h window — notifies the coach to decide.
+func (n *NotificationService) NotifyCancellationPending(ctx context.Context, p scheduling.PendingCancellationNotifPayload) error {
+	return n.EnqueueCancellationPending(ctx, CancellationPendingPayload{
+		SessionID:          p.SessionID,
+		ClientID:           p.ClientID,
+		CoachID:            p.CoachID,
+		StartsAt:           p.StartsAt,
+		ClientName:         p.ClientName,
+		CancellationReason: p.CancellationReason,
+		CoachName:          p.CoachName,
+		CoachEmail:         p.CoachEmail,
+		CoachPhone:         p.CoachPhone,
+	})
+}
+
 // --- Enqueue helpers (called transactionally alongside the triggering DB write) ---
 
 // EnqueueSessionConfirmed enqueues an immediate booking confirmation notification
@@ -95,6 +111,14 @@ func (n *NotificationService) EnqueueSessionCancelled(ctx context.Context, p Ses
 	return nil
 }
 
+// EnqueueCancellationPending enqueues a coach notification for a within-24h cancellation request.
+func (n *NotificationService) EnqueueCancellationPending(ctx context.Context, p CancellationPendingPayload) error {
+	if err := n.outbox.Enqueue(ctx, EventCancellationPending, p, time.Now()); err != nil {
+		return fmt.Errorf("messaging: enqueue cancellation pending: %w", err)
+	}
+	return nil
+}
+
 // EnqueuePaymentFailed enqueues a failed payment alert for the coach.
 func (n *NotificationService) EnqueuePaymentFailed(ctx context.Context, p PaymentFailedPayload) error {
 	if err := n.outbox.Enqueue(ctx, EventPaymentFailed, p, time.Now()); err != nil {
@@ -114,6 +138,8 @@ func (n *NotificationService) Deliver(ctx context.Context, entry OutboxEntry) er
 		return n.deliverSessionReminder(ctx, entry)
 	case EventSessionCancelled:
 		return n.deliverSessionCancelled(ctx, entry)
+	case EventCancellationPending:
+		return n.deliverCancellationPending(ctx, entry)
 	case EventPaymentFailed:
 		return n.deliverPaymentFailed(ctx, entry)
 	default:
@@ -191,6 +217,33 @@ func (n *NotificationService) deliverSessionCancelled(ctx context.Context, entry
 		msg := SessionCancelledSMS(p.StartsAt, p.CreditIssued)
 		if err := n.sms.Send(ctx, p.ClientPhone, msg); err != nil {
 			n.logger.WarnContext(ctx, "session cancelled sms failed", "client_id", p.ClientID, "error", err)
+			errs = append(errs, err)
+		}
+	}
+
+	return firstErr(errs)
+}
+
+func (n *NotificationService) deliverCancellationPending(ctx context.Context, entry OutboxEntry) error {
+	var p CancellationPendingPayload
+	if err := unmarshalPayload(entry.Payload, &p); err != nil {
+		return err
+	}
+
+	var errs []error
+
+	// Email the coach.
+	subject, html := CancellationPendingEmail(p.CoachName, p.ClientName, p.CancellationReason, p.StartsAt)
+	if err := n.email.SendEmail(ctx, p.CoachEmail, p.CoachName, subject, html); err != nil {
+		n.logger.WarnContext(ctx, "cancellation pending email failed", "coach_id", p.CoachID, "error", err)
+		errs = append(errs, err)
+	}
+
+	// SMS the coach (if phone available).
+	if p.CoachPhone != "" {
+		msg := CancellationPendingSMS(p.ClientName, p.StartsAt)
+		if err := n.sms.Send(ctx, p.CoachPhone, msg); err != nil {
+			n.logger.WarnContext(ctx, "cancellation pending sms failed", "coach_id", p.CoachID, "error", err)
 			errs = append(errs, err)
 		}
 	}

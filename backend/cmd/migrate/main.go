@@ -13,8 +13,6 @@ import (
 	"github.com/danielgonzalez/pt-scheduler/internal/platform/config"
 )
 
-// usage: go run ./cmd/migrate up|down [N]
-//
 // Examples:
 //   go run ./cmd/migrate up         – apply all pending migrations
 //   go run ./cmd/migrate down 1     – roll back the most recent migration

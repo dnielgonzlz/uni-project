@@ -29,19 +29,19 @@ func session(start time.Time) scheduling.Session {
 func TestCheckRecoveryPeriod_NoConflict(t *testing.T) {
 	t.Parallel()
 	existing := []scheduling.Session{
-		session(fixedTime(6, 9, 0)),  // Monday 09:00
+		session(fixedTime(6, 9, 0)), // Monday 09:00
 	}
-	// Propose Tuesday 10:00 — 25h gap, fine
+	// Propose Tuesday 10:00 — different calendar day, fine
 	err := scheduling.CheckRecoveryPeriod(fixedTime(7, 10, 0), existing)
 	require.NoError(t, err)
 }
 
-func TestCheckRecoveryPeriod_TooClose_After(t *testing.T) {
+func TestCheckRecoveryPeriod_SameDay_After(t *testing.T) {
 	t.Parallel()
 	existing := []scheduling.Session{
-		session(fixedTime(6, 9, 0)), // Monday 09:00–10:00
+		session(fixedTime(6, 9, 0)), // Monday 09:00
 	}
-	// Propose Monday 20:00 — only 10h after the session ends at 10:00
+	// Propose Monday 20:00 — same calendar day, not allowed
 	err := scheduling.CheckRecoveryPeriod(fixedTime(6, 20, 0), existing)
 	require.Error(t, err)
 
@@ -50,23 +50,23 @@ func TestCheckRecoveryPeriod_TooClose_After(t *testing.T) {
 	require.Equal(t, "recovery_period", ce.Code)
 }
 
-func TestCheckRecoveryPeriod_TooClose_Before(t *testing.T) {
+func TestCheckRecoveryPeriod_SameDay_Before(t *testing.T) {
 	t.Parallel()
 	existing := []scheduling.Session{
 		session(fixedTime(7, 15, 0)), // Tuesday 15:00
 	}
-	// Propose Tuesday 09:00 — only 5h before Tuesday 15:00, less than 24h gap after end
+	// Propose Tuesday 08:00 — same calendar day, not allowed
 	err := scheduling.CheckRecoveryPeriod(fixedTime(7, 8, 0), existing)
 	require.Error(t, err)
 }
 
-func TestCheckRecoveryPeriod_ExactlyAtBoundary(t *testing.T) {
+func TestCheckRecoveryPeriod_CrossMidnight_Allowed(t *testing.T) {
 	t.Parallel()
 	existing := []scheduling.Session{
-		session(fixedTime(6, 9, 0)), // Monday 09:00–10:00
+		session(fixedTime(6, 19, 0)), // Monday 19:00
 	}
-	// Propose Tuesday 10:00 — exactly 24h after session ends → allowed
-	err := scheduling.CheckRecoveryPeriod(fixedTime(7, 10, 0), existing)
+	// Propose Tuesday 08:00 — different calendar day despite being only 13h later
+	err := scheduling.CheckRecoveryPeriod(fixedTime(7, 8, 0), existing)
 	require.NoError(t, err)
 }
 

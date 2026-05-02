@@ -12,6 +12,9 @@ import (
 // ErrInvalidToken is returned when a JWT cannot be parsed or its claims are invalid.
 var ErrInvalidToken = errors.New("invalid or expired token")
 
+// ErrAlreadyVerified is returned when a user tries to re-verify an already-verified account.
+var ErrAlreadyVerified = errors.New("email already verified")
+
 // GenerateAccessToken mints a signed JWT access token.
 func GenerateAccessToken(userID uuid.UUID, role, secret string, expiryMinutes int) (string, error) {
 	now := time.Now().UTC()

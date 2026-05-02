@@ -34,6 +34,28 @@ func (e *EmailService) SendEmail(ctx context.Context, toEmail, toName, subject, 
 	return nil
 }
 
+// SendVerificationEmail sends a one-time email address verification link.
+func (e *EmailService) SendVerificationEmail(ctx context.Context, toEmail, toName, verifyLink string) error {
+	body := fmt.Sprintf(`
+<p>Hi %s,</p>
+<p>Thanks for signing up to PT Intelligent Booking. Please verify your email address to get started.</p>
+<p><a href="%s">Verify my email address</a></p>
+<p>This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>
+<p>— PT Intelligent Booking Team</p>
+`, toName, verifyLink)
+
+	params := &resend.SendEmailRequest{
+		From:    e.fromAddress,
+		To:      []string{toEmail},
+		Subject: "Verify your PT Intelligent Booking email address",
+		Html:    body,
+	}
+	if _, err := e.client.Emails.SendWithContext(ctx, params); err != nil {
+		return fmt.Errorf("email: send verification to %s: %w", toEmail, err)
+	}
+	return nil
+}
+
 // SendPasswordReset sends a password reset email with a single-use link.
 // The link expires after the configured reset expiry window (default 60 min).
 func (e *EmailService) SendPasswordReset(ctx context.Context, toEmail, toName, resetLink string) error {

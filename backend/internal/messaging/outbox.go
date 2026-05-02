@@ -12,10 +12,11 @@ import (
 
 // OutboxEvent types — these constants are stored in notification_outbox.event_type.
 const (
-	EventSessionConfirmed  = "session_confirmed"
-	EventSessionReminder   = "session_reminder"
-	EventSessionCancelled  = "session_cancelled"
-	EventPaymentFailed     = "payment_failed"
+	EventSessionConfirmed       = "session_confirmed"
+	EventSessionReminder        = "session_reminder"
+	EventSessionCancelled       = "session_cancelled"
+	EventCancellationPending    = "cancellation_pending"
+	EventPaymentFailed          = "payment_failed"
 )
 
 // OutboxEntry is a single row in notification_outbox.
@@ -52,6 +53,20 @@ type SessionCancelledPayload struct {
 	ClientPhone string    `json:"client_phone"`
 	ClientEmail string    `json:"client_email"`
 	CreditIssued bool     `json:"credit_issued"`
+}
+
+// CancellationPendingPayload is the JSON stored for EventCancellationPending.
+// Sent to the coach when a client cancels inside the 24h window.
+type CancellationPendingPayload struct {
+	SessionID          uuid.UUID `json:"session_id"`
+	ClientID           uuid.UUID `json:"client_id"`
+	CoachID            uuid.UUID `json:"coach_id"`
+	StartsAt           time.Time `json:"starts_at"`
+	ClientName         string    `json:"client_name"`
+	CancellationReason string    `json:"cancellation_reason"`
+	CoachName          string    `json:"coach_name"`
+	CoachEmail         string    `json:"coach_email"`
+	CoachPhone         string    `json:"coach_phone"`
 }
 
 // PaymentFailedPayload is the JSON stored for EventPaymentFailed.

@@ -1,3 +1,25 @@
+// GoCardless Direct Debit integration
+//
+// NOTE: This integration was fully designed and implemented as part of the PT Scheduler
+// backend. GoCardless is the natural payment rail for a UK-localised PT scheduling product
+// because Bacs Direct Debit is how the majority of recurring consumer payments work in the
+// UK (gym memberships, subscriptions, etc.).
+//
+// However, the GoCardless merchant application submitted during this project was REJECTED
+// before the submission deadline, and there was insufficient time to appeal or onboard with
+// an alternative Direct Debit provider.
+//
+// The code below is therefore written but intentionally NOT active. All public methods on
+// GoCardlessClient return immediately from their callers in service.go (see
+// ErrGoCardlessNotAvailable). The HTTP client, HMAC verification, and API request logic
+// are preserved here as a clear starting point for future development.
+//
+// Enabling this integration in a future iteration requires only:
+//   1. A live GoCardless merchant account with approved application
+//   2. Set GOCARDLESS_ACCESS_TOKEN and GOCARDLESS_WEBHOOK_SECRET env vars
+//   3. Set GOCARDLESS_ENV=live (or sandbox for testing)
+//   4. Remove the ErrGoCardlessNotAvailable early-returns in service.go
+
 package billing
 
 import (
@@ -24,10 +46,10 @@ const (
 // We use HTTP directly rather than the SDK to keep dependencies minimal
 // and give explicit control over idempotency and error handling.
 type GoCardlessClient struct {
-	accessToken    string
-	webhookSecret  string
-	env            string // "sandbox" | "live"
-	httpClient     *http.Client
+	accessToken   string
+	webhookSecret string
+	env           string // "sandbox" | "live"
+	httpClient    *http.Client
 }
 
 func NewGoCardlessClient(accessToken, webhookSecret, env string) *GoCardlessClient {
@@ -45,10 +67,10 @@ func NewGoCardlessClient(accessToken, webhookSecret, env string) *GoCardlessClie
 func (gc *GoCardlessClient) CreateRedirectFlow(ctx context.Context, description, redirectURI, sessionToken string) (string, string, error) {
 	body := map[string]any{
 		"redirect_flows": map[string]any{
-			"description":    description,
-			"session_token":  sessionToken,
+			"description":          description,
+			"session_token":        sessionToken,
 			"success_redirect_url": redirectURI,
-			"scheme":         "bacs",
+			"scheme":               "bacs",
 		},
 	}
 
@@ -101,10 +123,10 @@ func (gc *GoCardlessClient) CreatePayment(ctx context.Context, mandateID, idempo
 
 	body := map[string]any{
 		"payments": map[string]any{
-			"amount":       amountPence,
-			"currency":     "GBP",
-			"charge_date":  chargeDate.Format("2006-01-02"),
-			"description":  description,
+			"amount":      amountPence,
+			"currency":    "GBP",
+			"charge_date": chargeDate.Format("2006-01-02"),
+			"description": description,
 			"links": map[string]string{
 				"mandate": mandateID,
 			},

@@ -32,3 +32,16 @@ func InternalError(w http.ResponseWriter, r *http.Request, logger *slog.Logger, 
 	logger.ErrorContext(r.Context(), "internal server error", "error", err, "path", r.URL.Path)
 	Error(w, http.StatusInternalServerError, "an unexpected error occurred")
 }
+
+// ErrorResponse is the JSON shape returned for all error responses.
+// Used only as a Swagger doc type — not instantiated at runtime.
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
+// ValidationErrorResponse is the JSON shape returned on 422 Unprocessable Entity.
+// Used only as a Swagger doc type — not instantiated at runtime.
+type ValidationErrorResponse struct {
+	Error  string            `json:"error"`
+	Fields map[string]string `json:"fields"`
+}

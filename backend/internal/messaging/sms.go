@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/twilio/twilio-go"
@@ -52,4 +53,33 @@ func (s *SMSService) Send(ctx context.Context, toE164, body string) error {
 		return fmt.Errorf("sms: send to %s: %w", toE164, err)
 	}
 	return nil
+}
+
+// SendContentTemplate sends a Twilio Content API template message.
+// For WhatsApp production-initiated messages this is required outside the 24h window.
+func (s *SMSService) SendContentTemplate(ctx context.Context, toE164, contentSID string, variables map[string]string) (string, error) {
+	to := toE164
+	if s.channel == "whatsapp" {
+		to = "whatsapp:" + toE164
+	}
+
+	rawVariables, err := json.Marshal(variables)
+	if err != nil {
+		return "", fmt.Errorf("sms: marshal template variables: %w", err)
+	}
+
+	params := &openapi.CreateMessageParams{}
+	params.SetTo(to)
+	params.SetFrom(s.fromNumber)
+	params.SetContentSid(contentSID)
+	params.SetContentVariables(string(rawVariables))
+
+	msg, err := s.client.Api.CreateMessage(params)
+	if err != nil {
+		return "", fmt.Errorf("sms: send template to %s: %w", toE164, err)
+	}
+	if msg.Sid == nil {
+		return "", nil
+	}
+	return *msg.Sid, nil
 }

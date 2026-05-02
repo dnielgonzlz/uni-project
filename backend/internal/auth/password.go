@@ -13,7 +13,7 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// argon2id parameters — deliberately modest for a university server.
+// argon2id parameters, simple encryption for a university server.
 // Increase time and memory in production as hardware allows.
 const (
 	argonTime    = 1
@@ -86,7 +86,7 @@ func VerifyPassword(password, encoded string) error {
 }
 
 // GenerateSecureToken returns a cryptographically random 32-byte hex string.
-// This is the raw token returned to the client; only its SHA-256 hash is stored.
+// This is the raw token returned to the client, only its SHA-256 hash is stored.
 func GenerateSecureToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

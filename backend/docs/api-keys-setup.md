@@ -22,7 +22,6 @@ This document lists every external service credential the backend needs, where t
 | `RESEND_API_KEY` | Resend | Yes |
 | `RESEND_FROM_ADDRESS` | Resend | Yes |
 | `SOLVER_URL` | Internal (your Python service) | No (default: http://localhost:8000) |
-| `SENTRY_DSN` | Sentry | No (disables error tracking if empty) |
 | `CORS_ALLOWED_ORIGINS` | Internal | Yes |
 | `PORT` | Internal | No (default: 8080) |
 | `ENV` | Internal | No (default: development) |
@@ -241,22 +240,7 @@ Resend sends transactional emails (password reset, booking confirmations, remind
 
 ---
 
-## 8. Sentry — `SENTRY_DSN` (optional)
-
-**What it is**: Error tracking. Sentry captures unhandled errors and notifies you.
-
-**Where to get it**:
-1. Go to [sentry.io](https://sentry.io) and create a project (choose Go platform)
-2. Sentry gives you a DSN (looks like `https://abc123@o123456.ingest.sentry.io/789`)
-
-**Files that use it**:
-- `internal/platform/config/config.go` — loaded but not yet wired (Phase 6 adds Sentry SDK calls)
-
-> **Note**: Leaving this empty disables Sentry with no side effects. Safe to skip for local development.
-
----
-
-## 9. CORS — `CORS_ALLOWED_ORIGINS`
+## 8. CORS — `CORS_ALLOWED_ORIGINS`
 
 **What it is**: A comma-separated list of frontend URLs that are allowed to call the API from a browser.
 
@@ -321,8 +305,6 @@ RESEND_FROM_ADDRESS=PT Scheduler <notifications@yourptapp.com>
 SOLVER_URL=http://localhost:8000
 SOLVER_TIMEOUT_SECONDS=30
 
-# Sentry (optional)
-SENTRY_DSN=
 ```
 
 ---
@@ -339,4 +321,3 @@ If you're setting up from scratch, do these in order:
 6. **GoCardless** sandbox token — needed for Direct Debit endpoints
 7. **Resend** — needed for password reset emails
 8. **Twilio** — needed for SMS notifications
-9. **Sentry** — optional, add when deploying to production

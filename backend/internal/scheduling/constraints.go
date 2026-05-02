@@ -9,9 +9,6 @@ const (
 	// SessionDuration is fixed at 60 minutes per the architecture decision.
 	SessionDuration = 60 * time.Minute
 
-	// RecoveryPeriod is the minimum rest time between any two sessions for the same client.
-	RecoveryPeriod = 24 * time.Hour
-
 	// MaxSessionsPerDay is the normal daily cap for a coach.
 	MaxSessionsPerDay = 4
 
@@ -32,40 +29,24 @@ func (e *ConstraintError) Error() string {
 	return fmt.Sprintf("constraint violation [%s]: %s", e.Code, e.Message)
 }
 
-// CheckRecoveryPeriod returns an error if newStart is within RecoveryPeriod
-// of any existing session for the same client.
+// CheckRecoveryPeriod returns an error if newStart falls on the same calendar
+// day (Europe/London) as any existing session for the same client.  Sessions
+// on different days are always allowed regardless of clock proximity.
 //
-// existing must be the list of confirmed/proposed sessions for the client,
-// sorted by starts_at ascending.
+// existing must be the list of confirmed/proposed sessions for the client.
 func CheckRecoveryPeriod(newStart time.Time, existing []Session) error {
-	newEnd := newStart.Add(SessionDuration)
+	loc, _ := time.LoadLocation("Europe/London")
+	ny, nm, nd := newStart.In(loc).Date()
 
 	for _, s := range existing {
-		// Gap before the new session starts
-		if newStart.Before(s.StartsAt) {
-			gap := s.StartsAt.Sub(newEnd)
-			if gap < RecoveryPeriod {
-				return &ConstraintError{
-					Code: "recovery_period",
-					Message: fmt.Sprintf(
-						"session at %s is only %s before the proposed slot — minimum 24h required",
-						s.StartsAt.Format(time.RFC3339), gap.Round(time.Minute),
-					),
-				}
-			}
-		}
-
-		// Gap after the existing session ends
-		if newStart.After(s.StartsAt) {
-			gap := newStart.Sub(s.EndsAt)
-			if gap < RecoveryPeriod {
-				return &ConstraintError{
-					Code: "recovery_period",
-					Message: fmt.Sprintf(
-						"session at %s ends only %s before the proposed slot — minimum 24h required",
-						s.StartsAt.Format(time.RFC3339), gap.Round(time.Minute),
-					),
-				}
+		ey, em, ed := s.StartsAt.In(loc).Date()
+		if ny == ey && nm == em && nd == ed {
+			return &ConstraintError{
+				Code: "recovery_period",
+				Message: fmt.Sprintf(
+					"client already has a session on %s — only one session per calendar day is allowed",
+					newStart.In(loc).Format("2006-01-02"),
+				),
 			}
 		}
 	}

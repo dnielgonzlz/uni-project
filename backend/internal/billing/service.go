@@ -9,18 +9,68 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/danielgonzalez/pt-scheduler/internal/users"
 )
+
+// ErrGoCardlessNotAvailable is returned by all GoCardless methods.
+//
+// The GoCardless merchant application was rejected before the project submission deadline
+// and there was insufficient time to re-apply or switch to an alternative Direct Debit
+// provider. The full integration has been written and is preserved in gocardless.go,
+// service.go, handler.go, and repository.go as an obvious future development path for
+// this UK-localised product. Re-enabling it requires only a live GoCardless account and
+// the removal of these early-return guards.
+var ErrGoCardlessNotAvailable = errors.New("GoCardless Direct Debit integration is not available in this release")
+
+// userLookup is the narrow slice of the users.Repository needed by this package.
+type userLookup interface {
+	GetClientByID(ctx context.Context, id uuid.UUID) (*users.Client, error)
+	GetCoachByID(ctx context.Context, id uuid.UUID) (*users.Coach, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (*users.User, error)
+}
+
+// PaymentNotifier is satisfied by messaging.NotificationService.
+type PaymentNotifier interface {
+	EnqueuePaymentFailedAlert(ctx context.Context, coachID, clientID uuid.UUID,
+		coachName, coachEmail, coachPhone, clientName string,
+		year, month int, provider string) error
+}
 
 // Service orchestrates all billing operations.
 type Service struct {
-	repo   *Repository
-	stripe *StripeClient
-	gc     *GoCardlessClient
-	logger *slog.Logger
+	repo     *Repository
+	stripe   *StripeClient
+	gc       *GoCardlessClient
+	logger   *slog.Logger
+	users    userLookup
+	notifier PaymentNotifier
+	subRepo  *SubscriptionRepository
+	subSvc   *SubscriptionService
 }
 
 func NewService(repo *Repository, stripe *StripeClient, gc *GoCardlessClient, logger *slog.Logger) *Service {
 	return &Service{repo: repo, stripe: stripe, gc: gc, logger: logger}
+}
+
+// WithUserLookup injects the user repository so the service can look up names/contacts
+// for notification payloads. Call this once during wiring in main.go.
+func (s *Service) WithUserLookup(u userLookup) *Service {
+	s.users = u
+	return s
+}
+
+// WithNotifier injects the notification service. Call this once during wiring in main.go.
+func (s *Service) WithNotifier(n PaymentNotifier) *Service {
+	s.notifier = n
+	return s
+}
+
+// WithSubscriptionService injects the subscription service for webhook handling.
+func (s *Service) WithSubscriptionService(subRepo *SubscriptionRepository, subSvc *SubscriptionService) *Service {
+	s.subRepo = subRepo
+	s.subSvc = subSvc
+	return s
 }
 
 // --- Stripe card setup ---
@@ -33,6 +83,13 @@ func (s *Service) CreateSetupIntent(ctx context.Context, clientID uuid.UUID, ema
 	customerID, err := s.stripe.CreateOrGetCustomer(ctx, email, fullName)
 	if err != nil {
 		return nil, fmt.Errorf("billing: create setup intent: %w", err)
+	}
+
+	// Store the Stripe customer ID so we can create subscriptions later.
+	if s.subRepo != nil {
+		if err := s.subRepo.SetStripeCustomerID(ctx, clientID, customerID); err != nil {
+			s.logger.WarnContext(ctx, "billing: failed to store stripe customer id", "client_id", clientID, "error", err)
+		}
 	}
 
 	resp, err := s.stripe.CreateSetupIntent(ctx, customerID)
@@ -48,9 +105,14 @@ func (s *Service) CreateSetupIntent(ctx context.Context, clientID uuid.UUID, ema
 // FRONTEND: redirect the client to the returned redirect_url; after they authorise,
 // GoCardless redirects them back to redirect_uri — call POST /api/v1/payments/mandate/complete
 // with the redirect_flow_id query param to finalise the mandate.
+//
+// NOT ACTIVE: GoCardless application was rejected. See ErrGoCardlessNotAvailable.
 func (s *Service) CreateMandateFlow(ctx context.Context, clientID uuid.UUID, redirectURI string) (*MandateResponse, error) {
-	sessionToken := clientID.String() // use client ID as session token for simplicity
+	return nil, ErrGoCardlessNotAvailable
 
+	// --- Preserved implementation (unreachable until GoCardless account is approved) ---
+	//nolint:govet // intentional unreachable code kept for future use
+	sessionToken := clientID.String()
 	redirectURL, flowID, err := s.gc.CreateRedirectFlow(
 		ctx,
 		"PT Scheduler monthly training subscription",
@@ -60,20 +122,21 @@ func (s *Service) CreateMandateFlow(ctx context.Context, clientID uuid.UUID, red
 	if err != nil {
 		return nil, fmt.Errorf("billing: create mandate flow: %w", err)
 	}
-
-	return &MandateResponse{
-		RedirectURL: redirectURL,
-		FlowID:      flowID,
-	}, nil
+	return &MandateResponse{RedirectURL: redirectURL, FlowID: flowID}, nil
 }
 
 // CompleteMandateFlow finalises a GoCardless redirect flow and stores the mandate.
+//
+// NOT ACTIVE: GoCardless application was rejected. See ErrGoCardlessNotAvailable.
 func (s *Service) CompleteMandateFlow(ctx context.Context, clientID uuid.UUID, flowID string) (*Mandate, error) {
+	return nil, ErrGoCardlessNotAvailable
+
+	// --- Preserved implementation (unreachable until GoCardless account is approved) ---
+	//nolint:govet // intentional unreachable code kept for future use
 	mandateID, err := s.gc.CompleteRedirectFlow(ctx, flowID, clientID.String())
 	if err != nil {
 		return nil, fmt.Errorf("billing: complete mandate: %w", err)
 	}
-
 	mandate, err := s.repo.UpsertMandate(ctx, clientID, mandateID, "active")
 	if err != nil {
 		return nil, fmt.Errorf("billing: store mandate: %w", err)
@@ -137,16 +200,20 @@ func (s *Service) chargeStripe(ctx context.Context, p *Payment) error {
 	return s.repo.UpdatePaymentStatus(ctx, p.ID, PaymentStatusPending, &piID)
 }
 
+// chargeGoCardless submits a Bacs Direct Debit payment against the client's mandate.
+//
+// NOT ACTIVE: GoCardless application was rejected. See ErrGoCardlessNotAvailable.
 func (s *Service) chargeGoCardless(ctx context.Context, p *Payment) error {
+	return ErrGoCardlessNotAvailable
+
+	// --- Preserved implementation (unreachable until GoCardless account is approved) ---
+	//nolint:govet // intentional unreachable code kept for future use
 	mandate, err := s.repo.GetMandateByClientID(ctx, p.ClientID)
 	if err != nil {
 		return fmt.Errorf("billing: get mandate: %w", err)
 	}
-
-	// Bacs advance notice check
 	chargeDate := BacsEarliestChargeDate(time.Now().UTC(), false)
-	_ = chargeDate // passed implicitly through CreatePayment
-
+	_ = chargeDate
 	gcPaymentID, err := s.gc.CreatePayment(
 		ctx,
 		mandate.MandateID,
@@ -161,6 +228,51 @@ func (s *Service) chargeGoCardless(ctx context.Context, p *Payment) error {
 }
 
 // --- Webhook handlers ---
+
+// notifyPaymentFailed looks up the client and coach from the payment record and
+// enqueues a failure alert for the coach. Errors are logged but never returned —
+// a missing notification must not fail the webhook acknowledgement.
+func (s *Service) notifyPaymentFailed(ctx context.Context, p *Payment) {
+	if s.notifier == nil || s.users == nil {
+		return
+	}
+
+	client, err := s.users.GetClientByID(ctx, p.ClientID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "billing: notify payment failed — client lookup", "client_id", p.ClientID, "error", err)
+		return
+	}
+	clientUser, err := s.users.GetUserByID(ctx, client.UserID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "billing: notify payment failed — client user lookup", "user_id", client.UserID, "error", err)
+		return
+	}
+	coach, err := s.users.GetCoachByID(ctx, client.CoachID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "billing: notify payment failed — coach lookup", "coach_id", client.CoachID, "error", err)
+		return
+	}
+	coachUser, err := s.users.GetUserByID(ctx, coach.UserID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "billing: notify payment failed — coach user lookup", "user_id", coach.UserID, "error", err)
+		return
+	}
+
+	coachPhone := ""
+	if coachUser.PhoneE164 != nil {
+		coachPhone = *coachUser.PhoneE164
+	}
+
+	if err := s.notifier.EnqueuePaymentFailedAlert(
+		ctx,
+		coach.ID, client.ID,
+		coachUser.FullName, coachUser.Email, coachPhone,
+		clientUser.FullName,
+		p.BillingYear, p.BillingMonth, p.Provider,
+	); err != nil {
+		s.logger.WarnContext(ctx, "billing: enqueue payment failed alert", "payment_id", p.ID, "error", err)
+	}
+}
 
 // HandleStripeWebhook processes a verified Stripe event and updates payment status.
 func (s *Service) HandleStripeWebhook(ctx context.Context, rawBody []byte, sigHeader string) error {
@@ -196,6 +308,39 @@ func (s *Service) HandleStripeWebhook(ctx context.Context, rawBody []byte, sigHe
 				// FRONTEND: surface failed payment in coach dashboard so they can follow up
 				_ = s.repo.UpdatePaymentStatus(ctx, p.ID, PaymentStatusFailed, &pi.ID)
 				s.logger.WarnContext(ctx, "stripe payment failed", "payment_id", p.ID, "client_id", p.ClientID)
+				s.notifyPaymentFailed(ctx, p)
+			}
+		}
+
+	case "invoice.payment_succeeded":
+		if s.subSvc != nil {
+			var inv struct {
+				Subscription        string `json:"subscription"`
+				PeriodStart         int64  `json:"period_start"`
+				PeriodEnd           int64  `json:"period_end"`
+				BillingReason       string `json:"billing_reason"`
+			}
+			if err := json.Unmarshal(event.Data.Raw, &inv); err == nil && inv.Subscription != "" {
+				// Skip the first invoice since credits are granted on AssignPlan.
+				if inv.BillingReason != "subscription_create" {
+					periodStart := timeFromUnix(inv.PeriodStart)
+					periodEnd := timeFromUnix(inv.PeriodEnd)
+					if err := s.subSvc.HandleInvoiceSucceeded(ctx, inv.Subscription, periodStart, periodEnd); err != nil {
+						s.logger.WarnContext(ctx, "billing: invoice.payment_succeeded handler", "error", err)
+					}
+				}
+			}
+		}
+
+	case "customer.subscription.deleted":
+		if s.subSvc != nil {
+			var stripeSubObj struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(event.Data.Raw, &stripeSubObj); err == nil {
+				if err := s.subSvc.HandleSubscriptionDeleted(ctx, stripeSubObj.ID); err != nil {
+					s.logger.WarnContext(ctx, "billing: customer.subscription.deleted handler", "error", err)
+				}
 			}
 		}
 	}
@@ -203,8 +348,18 @@ func (s *Service) HandleStripeWebhook(ctx context.Context, rawBody []byte, sigHe
 	return nil
 }
 
+func timeFromUnix(unix int64) time.Time {
+	return time.Unix(unix, 0).UTC()
+}
+
 // HandleGoCardlessWebhook processes a verified GoCardless event.
+//
+// NOT ACTIVE: GoCardless application was rejected. See ErrGoCardlessNotAvailable.
 func (s *Service) HandleGoCardlessWebhook(ctx context.Context, rawBody []byte, sigHeader string) error {
+	return ErrGoCardlessNotAvailable
+
+	// --- Preserved implementation (unreachable until GoCardless account is approved) ---
+	//nolint:govet // intentional unreachable code kept for future use
 	if err := s.gc.VerifyWebhookSignature(rawBody, sigHeader); err != nil {
 		return err
 	}
@@ -243,6 +398,7 @@ func (s *Service) HandleGoCardlessWebhook(ctx context.Context, rawBody []byte, s
 				// FRONTEND: surface failed Direct Debit in coach dashboard
 				_ = s.repo.UpdatePaymentStatus(ctx, p.ID, PaymentStatusFailed, &ev.Links.Payment)
 				s.logger.WarnContext(ctx, "gocardless payment failed", "payment_id", p.ID, "action", ev.Action)
+				s.notifyPaymentFailed(ctx, p)
 			}
 
 		case "mandates.cancelled", "mandates.expired":

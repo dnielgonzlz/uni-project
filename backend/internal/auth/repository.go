@@ -125,3 +125,51 @@ func (r *Repository) MarkPasswordResetTokenUsed(ctx context.Context, tokenHash s
 	_, err := r.db.Exec(ctx, q, tokenHash)
 	return err
 }
+
+// --- Email verification tokens ---
+
+// CreateEmailVerificationToken persists a hashed email verification token.
+func (r *Repository) CreateEmailVerificationToken(ctx context.Context, userID uuid.UUID, tokenHash string, expiresAt time.Time) (*EmailVerificationToken, error) {
+	const q = `
+		INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)
+		RETURNING id, user_id, token_hash, expires_at, used_at, created_at`
+
+	var t EmailVerificationToken
+	err := r.db.QueryRow(ctx, q, userID, tokenHash, expiresAt).Scan(
+		&t.ID, &t.UserID, &t.TokenHash, &t.ExpiresAt, &t.UsedAt, &t.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("auth: create email verification token: %w", err)
+	}
+	return &t, nil
+}
+
+// GetEmailVerificationToken returns a valid (not expired, not used) verification token by hash.
+func (r *Repository) GetEmailVerificationToken(ctx context.Context, tokenHash string) (*EmailVerificationToken, error) {
+	const q = `
+		SELECT id, user_id, token_hash, expires_at, used_at, created_at
+		FROM email_verification_tokens
+		WHERE token_hash = $1
+		  AND expires_at > NOW()
+		  AND used_at IS NULL`
+
+	var t EmailVerificationToken
+	err := r.db.QueryRow(ctx, q, tokenHash).Scan(
+		&t.ID, &t.UserID, &t.TokenHash, &t.ExpiresAt, &t.UsedAt, &t.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrTokenNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("auth: get email verification token: %w", err)
+	}
+	return &t, nil
+}
+
+// MarkEmailVerificationTokenUsed marks the token as consumed so it cannot be reused.
+func (r *Repository) MarkEmailVerificationTokenUsed(ctx context.Context, tokenHash string) error {
+	const q = `UPDATE email_verification_tokens SET used_at = NOW() WHERE token_hash = $1`
+	_, err := r.db.Exec(ctx, q, tokenHash)
+	return err
+}

@@ -1,0 +1,82 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# Prevent concurrent deploys — if a new push arrives while a deploy is running,
+# cancel the in-progress deploy and start a new one.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build & deploy to Elastic Beanstalk
+    runs-on: ubuntu-latest
+    environment: production   # requires manual approval in GitHub (optional gate)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Run tests (gate before deploy)
+        env:
+          # Minimal env for unit tests — no real credentials needed
+          DATABASE_URL: ""
+          JWT_SECRET: ci-placeholder-secret-32chars-long
+          JWT_ACCESS_EXPIRY_MIN: "15"
+          JWT_REFRESH_EXPIRY_DAYS: "7"
+          PASSWORD_RESET_EXPIRY_MIN: "60"
+          CORS_ALLOWED_ORIGINS: http://localhost:3000
+          RESEND_API_KEY: placeholder
+          RESEND_FROM_ADDRESS: test@example.com
+          TWILIO_ACCOUNT_SID: ACtest
+          TWILIO_AUTH_TOKEN: test
+          TWILIO_FROM_NUMBER: "+441234567890"
+          MESSAGING_CHANNEL: sms
+          STRIPE_SECRET_KEY: sk_test_placeholder
+          STRIPE_WEBHOOK_SECRET: whsec_placeholder
+          GOCARDLESS_ACCESS_TOKEN: test
+          GOCARDLESS_WEBHOOK_SECRET: test
+          GOCARDLESS_ENV: sandbox
+          SOLVER_URL: http://localhost:8000
+          SOLVER_TIMEOUT_SECONDS: "30"
+        run: go test -race -short ./...
+
+      - name: Build Linux binary
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o api ./cmd/api
+
+      - name: Create deployment ZIP
+        run: zip deploy.zip api Procfile .ebextensions/01-env.config
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to Elastic Beanstalk
+        uses: einaregilsson/beanstalk-deploy@v22
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: ${{ secrets.EB_APP_NAME }}
+          environment_name: ${{ secrets.EB_ENV_NAME }}
+          region: ${{ secrets.AWS_REGION }}
+          version_label: ${{ github.sha }}
+          deployment_package: deploy.zip
+          wait_for_environment_recovery: 60
+
+      - name: Smoke test — health check
+        run: |
+          sleep 10
+          curl --fail --retry 5 --retry-delay 5 \
+            http://${{ secrets.EB_ENV_NAME }}.eu-west-2.elasticbeanstalk.com/healthz

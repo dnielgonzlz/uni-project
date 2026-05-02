@@ -113,6 +113,16 @@ func (r *Repository) GetPreferredWindows(ctx context.Context, clientID uuid.UUID
 // UpsertSMSWindows inserts or replaces SMS-sourced preferred windows for a client.
 // Manual windows are preserved.
 func (r *Repository) UpsertSMSWindows(ctx context.Context, clientID interface{ String() string }, entries []PreferredWindowEntry) ([]PreferredWindow, error) {
+	return r.UpsertTwilioWindows(ctx, clientID, "sms", entries)
+}
+
+// UpsertTwilioWindows inserts or replaces Twilio-sourced preferred windows for a client.
+// Manual windows and other Twilio channels are preserved.
+func (r *Repository) UpsertTwilioWindows(ctx context.Context, clientID interface{ String() string }, source string, entries []PreferredWindowEntry) ([]PreferredWindow, error) {
+	if source != "sms" && source != "whatsapp" {
+		return nil, fmt.Errorf("availability: invalid Twilio source %q", source)
+	}
+
 	id, err := uuid.Parse(clientID.String())
 	if err != nil {
 		return nil, fmt.Errorf("availability: invalid client id: %w", err)
@@ -125,33 +135,33 @@ func (r *Repository) UpsertSMSWindows(ctx context.Context, clientID interface{ S
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx,
-		`DELETE FROM client_preferred_windows WHERE client_id = $1 AND source = 'sms'`,
-		id,
+		`DELETE FROM client_preferred_windows WHERE client_id = $1 AND source = $2`,
+		id, source,
 	); err != nil {
-		return nil, fmt.Errorf("availability: delete sms windows: %w", err)
+		return nil, fmt.Errorf("availability: delete %s windows: %w", source, err)
 	}
 
 	const ins = `
 		INSERT INTO client_preferred_windows (client_id, day_of_week, start_time, end_time, source)
-		VALUES ($1, $2, $3::time, $4::time, 'sms')
+		VALUES ($1, $2, $3::time, $4::time, $5)
 		RETURNING id, client_id, day_of_week, start_time::text, end_time::text,
 		          source, collected_at, created_at`
 
 	var result []PreferredWindow
 	for _, e := range entries {
 		var pw PreferredWindow
-		err := tx.QueryRow(ctx, ins, id, e.DayOfWeek, e.StartTime, e.EndTime).Scan(
+		err := tx.QueryRow(ctx, ins, id, e.DayOfWeek, e.StartTime, e.EndTime, source).Scan(
 			&pw.ID, &pw.ClientID, &pw.DayOfWeek, &pw.StartTime, &pw.EndTime,
 			&pw.Source, &pw.CollectedAt, &pw.CreatedAt,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("availability: insert sms window: %w", err)
+			return nil, fmt.Errorf("availability: insert %s window: %w", source, err)
 		}
 		result = append(result, pw)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("availability: commit sms windows: %w", err)
+		return nil, fmt.Errorf("availability: commit %s windows: %w", source, err)
 	}
 	return result, nil
 }

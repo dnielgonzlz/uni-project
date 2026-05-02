@@ -1,4 +1,4 @@
-.PHONY: run migrate-up migrate-down test lint build help
+.PHONY: run migrate-up migrate-down test lint build swagger help
 
 # Load .env if it exists (for local dev convenience)
 ifneq (,$(wildcard .env))
@@ -39,6 +39,10 @@ build:
 tidy:
 	go mod tidy
 	go mod verify
+
+## swagger: regenerate Swagger docs from handler annotations
+swagger:
+	swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
 
 ## help: list available make targets
 help:

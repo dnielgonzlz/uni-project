@@ -59,7 +59,6 @@ eb --version
 
 You also need:
 - An **AWS account** (go to aws.amazon.com → Create account; you'll need a credit card)
-- A **domain name** (e.g. from Namecheap, GoDaddy, or AWS Route 53)
 - The backend code working locally first
 
 ---
@@ -187,18 +186,35 @@ aws secretsmanager create-secret \
   --name pt-scheduler/production \
   --description "PT Scheduler production credentials" \
   --secret-string '{
-    "DATABASE_URL": "postgres://ptadmin:YOUR_PASSWORD@your-rds-endpoint.rds.amazonaws.com:5432/pt_scheduler",
-    "JWT_SECRET": "run_openssl_rand_hex_32_and_paste_here",
-    "STRIPE_SECRET_KEY": "sk_live_...",
-    "STRIPE_WEBHOOK_SECRET": "whsec_...",
-    "GOCARDLESS_ACCESS_TOKEN": "your_live_token",
-    "GOCARDLESS_WEBHOOK_SECRET": "your_webhook_secret",
-    "TWILIO_ACCOUNT_SID": "ACxxxx",
-    "TWILIO_AUTH_TOKEN": "your_auth_token",
-    "RESEND_API_KEY": "re_..."
+
+    "DATABASE_URL": "postgres://ptadmin:Daniel.1998@pt-scheduler-db.cxyswikosgeb.eu-west-2.rds.amazonaws.com:5432/pt_scheduler?sslmode=require",
+    "CORS_ALLOWED_ORIGINS": "https://pt-scheduler.eu-west-2.elasticbeanstalk.com",
+    "ENV": "production",
+    "APP_BASE_URL": "http://localhost:5173",
+    "SOLVER_URL": "",
+    "JWT_SECRET": "9293aba50d4a2685b0d3ddc0016f65823b11d9b23b61f854ba157aeb4b18c441",
+    "JWT_ACCESS_EXPIRY_MIN": "15",
+    "JWT_REFRESH_EXPIRY_DAYS": "7",
+    "PASSWORD_RESET_EXPIRY_MIN": "60",
+    "STRIPE_SECRET_KEY": "sk_test_...",
+    "STRIPE_WEBHOOK_SECRET": "whsec_RY1iyRjBS3OcWUh5BgHGRhWYPjTaxz1A",
+    "TWILIO_ACCOUNT_SID": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "TWILIO_AUTH_TOKEN": "c938306c4f38aa54ff903763f0943ff3",
+    "TWILIO_FROM_NUMBER": "+15559446161",
+    "TWILIO_PHONE_NUMBER": "+15559446161",
+    "TWILIO_AVAILABILITY_TEMPLATE_SID": "HX617d18c940142c61c1d8f59ef7d392e4",
+    "MESSAGING_CHANNEL": "whatsapp",
+    "AVAILABILITY_PROMPT_DAY": "friday",
+    "AVAILABILITY_PROMPT_TIME": "18:00",
+    "AVAILABILITY_PROMPT_TIMEZONE": "Europe/London",
+    "RESEND_API_KEY": "re_PuiPXFSy_2Kz6X4v19vmcPhyGTVK5avt9",
+    "RESEND_FROM_ADDRESS": "PT Intelligent Booking <onboarding@resend.dev>",
+    "OPENROUTER_API_KEY": "sk-or-v1-..."
   }' \
   --region eu-west-2
 ```
+
+> **GoCardless**: The GoCardless integration is not active (merchant application was rejected before launch). Omit `GOCARDLESS_ACCESS_TOKEN` and `GOCARDLESS_WEBHOOK_SECRET` — both default to empty and the application starts without them.
 
 > **Note**: For the initial deploy, you can also set these as Elastic Beanstalk environment variables directly (step 7). Secrets Manager is the production best practice, but environment variables are simpler to get started.
 
@@ -210,8 +226,10 @@ aws secretsmanager create-secret \
 
 OR-Tools is ~100MB, which exceeds the Lambda 50MB zip limit. We use a **Lambda Layer** to pre-package the dependencies separately.
 
+> **Note:** The solver lives at the **repo root** in `solver/`, not inside `backend/`. Run these commands from `solver/`.
+
 ```bash
-# In the solver/ directory
+# From the repo root
 cd solver
 
 # Create a package directory for the layer
@@ -224,7 +242,7 @@ pip install \
   --implementation cp \
   --python-version 3.12 \
   --only-binary=:all: \
-  ortools fastapi mangum
+  ortools fastapi mangum pydantic
 
 # Zip the layer
 cd layer
@@ -232,7 +250,8 @@ zip -r ../solver-layer.zip python/
 cd ..
 
 # Zip just the function code (no dependencies)
-zip -r solver-function.zip main.py solver.py
+# scheduler.py contains the solver logic; models.py defines the shared request/response types
+zip -r solver-function.zip main.py scheduler.py models.py
 ```
 
 ### 5.2 Create the Lambda Layer
@@ -281,21 +300,9 @@ aws lambda create-function \
   --region eu-west-2
 ```
 
-### 5.4 Update `main.py` to work with Lambda
+### 5.4 Mangum is already wired up — no code change needed
 
-Lambda doesn't run a server — it invokes a handler function. Add **Mangum** as an adapter (already in the layer above):
-
-Open `solver/main.py` and add this at the bottom:
-
-```python
-# Add this import at the top of solver/main.py:
-from mangum import Mangum
-
-# Add this at the bottom:
-handler = Mangum(app)
-```
-
-Mangum wraps the FastAPI app so Lambda can invoke it as if it were a normal HTTP server.
+`main.py` already imports Mangum and exposes `handler = Mangum(app)` at the bottom. The Lambda handler is `main.handler`. Nothing to edit.
 
 ### 5.5 Create a Function URL (so the Go API can call it)
 
@@ -314,7 +321,7 @@ Set `SOLVER_URL` to this URL in your Elastic Beanstalk environment variables (st
 
 ```bash
 cd solver
-zip -r solver-function.zip main.py solver.py
+zip -r solver-function.zip main.py scheduler.py models.py
 
 aws lambda update-function-code \
   --function-name pt-scheduler-solver \
@@ -450,12 +457,10 @@ eb setenv \
   JWT_ACCESS_EXPIRY_MIN=15 \
   JWT_REFRESH_EXPIRY_DAYS=7 \
   PASSWORD_RESET_EXPIRY_MIN=60 \
-  CORS_ALLOWED_ORIGINS="https://yourfrontend.com" \
+  APP_BASE_URL="https://yourfrontend.vercel.app" \
+  CORS_ALLOWED_ORIGINS="https://yourfrontend.vercel.app" \
   STRIPE_SECRET_KEY="sk_live_..." \
   STRIPE_WEBHOOK_SECRET="whsec_..." \
-  GOCARDLESS_ACCESS_TOKEN="your_live_token" \
-  GOCARDLESS_WEBHOOK_SECRET="your_webhook_secret" \
-  GOCARDLESS_ENV="live" \
   TWILIO_ACCOUNT_SID="ACxxxxxxxx" \
   TWILIO_AUTH_TOKEN="your_auth_token" \
   TWILIO_FROM_NUMBER="+441234567890" \
@@ -464,9 +469,13 @@ eb setenv \
   RESEND_FROM_ADDRESS="PT Scheduler <notifications@yourptapp.com>" \
   SOLVER_URL="https://abc123.lambda-url.eu-west-2.on.aws" \
   SOLVER_TIMEOUT_SECONDS=30 \
+  OPENROUTER_API_KEY="sk-or-v1-..." \
+  OPENROUTER_MODEL="openai/gpt-4o-mini" \
   ENV="production" \
   PORT=8080
 ```
+
+> **GoCardless**: Not active — omit `GOCARDLESS_ACCESS_TOKEN`, `GOCARDLESS_WEBHOOK_SECRET`, and `GOCARDLESS_ENV`. They default to empty/sandbox and the server starts without them.
 
 > **Tip**: You can also set these in the AWS Console: Elastic Beanstalk → your environment → Configuration → Updates, monitoring, and logging → Environment properties.
 
@@ -534,88 +543,69 @@ For simplicity at MVP, Option A is fine for the first deploy.
 
 ---
 
-## 9. Set Up HTTPS with ACM
+## 9. HTTPS — Skipped (no domain)
 
-Your API must be served over HTTPS (Stripe webhooks require it, and browsers block mixed content).
+ACM certificates require a domain name for DNS validation. Since we're not using a custom domain, skip this step entirely.
 
-### 9.1 Request an SSL certificate
-
-```bash
-aws acm request-certificate \
-  --domain-name api.yourptapp.com \
-  --validation-method DNS \
-  --region eu-west-2
-# Note the CertificateArn output
+Your API will be accessible over HTTP at the Elastic Beanstalk default URL:
+```
+http://pt-scheduler.eu-west-2.elasticbeanstalk.com
 ```
 
-### 9.2 Validate the certificate via DNS
-
-1. Go to **AWS Console** → **ACM** → your certificate → **Create records in Route 53** (if using Route 53) or copy the CNAME records and add them to your DNS provider manually
-2. Wait for status to change from `PENDING_VALIDATION` to `ISSUED` (5–30 minutes)
-
-### 9.3 Attach the certificate to the load balancer
-
-```bash
-eb setenv EB_LOAD_BALANCER_SCHEME=internet-facing
-
-# Or configure via the EB console:
-# Elastic Beanstalk → pt-scheduler-prod → Configuration →
-# Load balancer → Add listener → Port 443 → Protocol HTTPS →
-# SSL certificate → select your ACM certificate
-```
-
-Then update your CORS and webhook URLs to use `https://api.yourptapp.com`.
-
-### 9.4 Point your domain to Elastic Beanstalk
-
-In your DNS provider (or Route 53), add a CNAME record:
-```
-api.yourptapp.com → pt-scheduler.eu-west-2.elasticbeanstalk.com
-```
+> **Stripe webhook limitation**: Stripe requires HTTPS for webhook endpoints, even in test mode. Without HTTPS, Stripe cannot deliver webhook events to your server. For development and testing, use the **Stripe CLI** to forward events locally:
+> ```bash
+> stripe listen --forward-to localhost:8080/api/v1/webhooks/stripe
+> ```
+> This is fine for a university MVP. If you need live Stripe webhooks in production, you will need a domain at that point.
 
 ---
 
-## 10. Configure Stripe & GoCardless Webhooks
+## 10. Configure Webhooks
 
-Once you have a live HTTPS URL, update your webhook endpoints.
+### Stripe — use Stripe CLI (no HTTPS available)
 
-### Stripe
+Without HTTPS, Stripe cannot call your deployed server. For testing, forward events locally:
 
-1. Go to **Stripe Dashboard** → **Developers** → **Webhooks** → **Add endpoint**
-2. Endpoint URL: `https://api.yourptapp.com/api/v1/webhooks/stripe`
-3. Events to listen for:
-   - `payment_intent.succeeded`
-   - `payment_intent.payment_failed`
-4. Copy the **Signing secret** (`whsec_...`) and update `STRIPE_WEBHOOK_SECRET` in EB:
-   ```bash
-   eb setenv STRIPE_WEBHOOK_SECRET="whsec_your_new_secret"
-   ```
+```bash
+# Install the Stripe CLI (Mac)
+brew install stripe/stripe-cli/stripe
 
-### GoCardless
+# Log in
+stripe login
 
-1. Go to **GoCardless Dashboard** → **Developers** → **Webhooks** → **Create endpoint**
-2. Endpoint URL: `https://api.yourptapp.com/api/v1/webhooks/gocardless`
-3. Copy the secret and update `GOCARDLESS_WEBHOOK_SECRET`:
-   ```bash
-   eb setenv GOCARDLESS_WEBHOOK_SECRET="your_new_secret"
-   ```
+# Forward to your local server
+stripe listen --forward-to localhost:8080/api/v1/webhooks/stripe
+```
+
+The CLI prints a webhook signing secret (`whsec_...`) — set that as `STRIPE_WEBHOOK_SECRET` in your `.env` for local testing.
+
+Events to handle (already implemented):
+- `payment_intent.succeeded`
+- `payment_intent.payment_failed`
+
+### GoCardless — skip
+
+The GoCardless merchant application was rejected before launch. Integration code is preserved but disabled.
 
 ### Twilio
 
 1. Go to **Twilio Console** → **Phone Numbers** → your number → **Messaging**
-2. Set "A message comes in" → Webhook → `https://api.yourptapp.com/api/v1/webhooks/twilio`
+2. Set "A message comes in" → Webhook → `http://pt-scheduler.eu-west-2.elasticbeanstalk.com/api/v1/webhooks/twilio`
+
+> Twilio also supports HTTPS-only in some configurations. For a university MVP over HTTP this is acceptable. If Twilio rejects the HTTP URL, you will need a domain.
 
 ---
 
 ## 11. Set Up GitHub Actions CI/CD
 
-This automates the whole process: push to `main` → tests run → binary built → deployed to Elastic Beanstalk.
+The CI and deploy workflows **already exist** at `backend/.github/workflows/ci.yml` and `backend/.github/workflows/deploy.yml`. You do not need to create them.
+
+The deploy workflow does: push to `main` → tests run → Go binary built → zipped with `Procfile` and `.ebextensions/` → deployed to Elastic Beanstalk via `einaregilsson/beanstalk-deploy`. It also runs a smoke test against `/healthz` after deploy.
 
 ### 11.1 Add GitHub Secrets
 
-In your GitHub repository: **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+The only thing you need to do is add the required secrets. In your GitHub repository: **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
 
-Add these secrets:
 | Secret name | Value |
 |---|---|
 | `AWS_ACCESS_KEY_ID` | Your IAM user's access key ID |
@@ -623,11 +613,10 @@ Add these secrets:
 | `AWS_REGION` | `eu-west-2` |
 | `EB_APP_NAME` | `pt-scheduler` |
 | `EB_ENV_NAME` | `pt-scheduler-prod` |
-| `DATABASE_URL` | Your full RDS connection string (for running migrations) |
 
-### 11.2 Create the workflow file
+### 11.2 Workflow files (for reference only — already committed)
 
-Create `.github/workflows/deploy.yml`:
+The existing `deploy.yml` for reference:
 
 ```yaml
 name: CI/CD
@@ -816,7 +805,7 @@ aws cloudwatch put-metric-alarm \
 ### 12.4 Set up UptimeRobot (free uptime monitoring)
 
 1. Go to [uptimerobot.com](https://uptimerobot.com) → create a free account
-2. Add new monitor → HTTP(s) → `https://api.yourptapp.com/healthz`
+2. Add new monitor → HTTP(s) → `http://pt-scheduler.eu-west-2.elasticbeanstalk.com/healthz`
 3. Check interval: 5 minutes
 4. Alert when down → add your email
 
@@ -832,17 +821,18 @@ Work through this before going live:
 - [ ] RDS automated backups enabled (we set 7-day retention above)
 - [ ] RDS is not publicly accessible (confirmed during creation)
 - [ ] Elastic Beanstalk enhanced health reporting enabled
-- [ ] HTTPS working (`curl https://api.yourptapp.com/healthz` returns 200)
+- [ ] API reachable (`curl http://pt-scheduler.eu-west-2.elasticbeanstalk.com/healthz` returns 200)
 - [ ] CloudWatch alarms created and SNS email confirmed
-- [ ] UptimeRobot monitoring active
+- [ ] UptimeRobot monitoring active (`http://pt-scheduler.eu-west-2.elasticbeanstalk.com/healthz`)
 
 ### Application
 - [ ] All migrations applied (`/readyz` returns 200)
-- [ ] `GOCARDLESS_ENV=live` (not sandbox)
 - [ ] Stripe live keys in use (not test keys)
-- [ ] Stripe webhook endpoint points to production URL
-- [ ] GoCardless webhook endpoint points to production URL
-- [ ] Twilio SMS webhook points to production URL
+- [ ] Stripe CLI running locally for webhook testing (no HTTPS available without domain)
+- [ ] Twilio SMS webhook set to `http://pt-scheduler.eu-west-2.elasticbeanstalk.com/api/v1/webhooks/twilio`
+- [ ] `APP_BASE_URL` set to your frontend URL (Vercel/Netlify URL)
+- [ ] `CORS_ALLOWED_ORIGINS` set to your frontend URL
+- [ ] `OPENROUTER_API_KEY` set if AI availability parser is needed
 - [ ] `CORS_ALLOWED_ORIGINS` set to your production frontend URL only (not localhost)
 - [ ] `ENV=production` (enables JSON log format)
 

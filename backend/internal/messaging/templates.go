@@ -63,6 +63,31 @@ func SessionCancelledEmail(clientName string, startsAt time.Time, creditIssued b
 	return
 }
 
+// CancellationPendingEmail returns subject + HTML body sent to the coach when a client
+// requests cancellation inside the 24h window and awaits the coach's decision.
+func CancellationPendingEmail(coachName, clientName, reason string, startsAt time.Time) (subject, html string) {
+	subject = fmt.Sprintf("Cancellation request from %s — action required", clientName)
+	html = fmt.Sprintf(`
+<p>Hi %s,</p>
+<p><strong>%s</strong> has requested to cancel their session scheduled for <strong>%s</strong>.</p>
+<p><strong>Reason:</strong> %s</p>
+<p>Because this request is within 24 hours of the session, your 24-hour cancellation policy applies.
+Please log in to PT Scheduler to decide:</p>
+<ul>
+  <li><strong>Approve cancellation</strong> — the session is lost (no credit issued to the client)</li>
+  <li><strong>Waive policy</strong> — cancel the session and issue the client a replacement credit</li>
+</ul>
+<p>— PT Scheduler</p>
+`, coachName, clientName, formatUKDateTime(startsAt), reason)
+	return
+}
+
+// CancellationPendingSMS returns a short SMS alerting the coach of a pending cancellation decision.
+func CancellationPendingSMS(clientName string, startsAt time.Time) string {
+	return fmt.Sprintf("PT Scheduler: %s wants to cancel their session on %s (within 24h window). Log in to approve or waive.",
+		clientName, formatUKDateTime(startsAt))
+}
+
 // PaymentFailedEmail returns subject + HTML body alerting a coach of a failed payment.
 func PaymentFailedEmail(coachName, clientName string, year, month int, provider string) (subject, html string) {
 	subject = fmt.Sprintf("Payment failed for %s — %02d/%d", clientName, month, year)

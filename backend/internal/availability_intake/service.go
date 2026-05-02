@@ -2,50 +2,201 @@ package availability_intake
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/danielgonzalez/pt-scheduler/internal/availability"
 )
 
-// Service drives the SMS state machine for collecting client availability.
+// repoStore is the subset of Repository methods the service needs.
+// RecordWebhookEvent is invoked from Handler.InboundSMS only (idempotency); Service.Handle must not call it.
+type repoStore interface {
+	GetClientByPhone(ctx context.Context, phoneE164 string) (*InboundClient, error)
+	RecordWebhookEvent(ctx context.Context, messageSID string, payload map[string][]string) error
+	MarkLatestRecipientReplied(ctx context.Context, clientID uuid.UUID, rawReply string) error
+	GetOrCreateConversation(ctx context.Context, clientID uuid.UUID) (*Conversation, error)
+	UpdateConversation(ctx context.Context, id uuid.UUID, state string, ctx2 map[string]any) (*Conversation, error)
+	GetLatestCampaignWeekStart(ctx context.Context, clientID uuid.UUID) (time.Time, error)
+	UpdateRecipientParseResult(ctx context.Context, clientID uuid.UUID, parseStatus string, parsedWindowsJSON []byte) error
+}
+
+// availStore is the subset of availability.Repository methods the service needs.
+type availStore interface {
+	UpsertTwilioWindows(ctx context.Context, clientID interface{ String() string }, source string, entries []availability.PreferredWindowEntry) ([]availability.PreferredWindow, error)
+}
+
+// Service drives the Twilio state machine for collecting client availability.
 type Service struct {
-	repo      *Repository
-	availRepo *availability.Repository
+	repo      repoStore
+	availRepo availStore
+	parser    AvailabilityParser // nil or NoopParser → rule-based fallback
 	logger    *slog.Logger
 }
 
-func NewService(repo *Repository, availRepo *availability.Repository, logger *slog.Logger) *Service {
-	return &Service{repo: repo, availRepo: availRepo, logger: logger}
+func NewService(repo *Repository, availRepo *availability.Repository, parser AvailabilityParser, logger *slog.Logger) *Service {
+	return &Service{repo: repo, availRepo: availRepo, parser: parser, logger: logger}
 }
 
-// Handle processes an inbound SMS and returns the reply to send back via Twilio.
-func (s *Service) Handle(ctx context.Context, sms InboundSMS) (reply string, err error) {
-	clientID, err := s.repo.GetClientIDByPhone(ctx, sms.From)
+// Handle processes an inbound Twilio message and returns the reply to send back.
+func (s *Service) Handle(ctx context.Context, msg InboundMessage) (reply string, err error) {
+	client, err := s.repo.GetClientByPhone(ctx, msg.From)
 	if err != nil {
-		// Unknown sender — reply with a generic message, don't expose system info.
-		return "Sorry, we couldn't find an account linked to this number. Please contact your trainer.", nil
+		return "Hey! I don't recognise this number as one of my clients yet. Please contact your coach directly.", nil
+	}
+	if !client.AIBookingEnabled {
+		return "Your coach has not enabled WhatsApp scheduling for you yet. Please contact them directly.", nil
 	}
 
-	conv, err := s.repo.GetOrCreateConversation(ctx, clientID)
+	// Webhook idempotency is enforced in Handler.InboundSMS via RecordWebhookEvent (full form payload).
+	// Do not insert the same MessageSid again here or the second insert conflicts and the message is skipped.
+
+	if err := s.repo.MarkLatestRecipientReplied(ctx, client.ID, msg.Body); err != nil {
+		s.logger.WarnContext(ctx, "failed to mark campaign reply", "client_id", client.ID, "error", err)
+	}
+
+	conv, err := s.repo.GetOrCreateConversation(ctx, client.ID)
 	if err != nil {
 		return "", fmt.Errorf("intake: get conversation: %w", err)
 	}
 
-	text := strings.TrimSpace(strings.ToLower(sms.Body))
+	// AI path — active whenever a real parser is wired in.
+	if _, isNoop := s.parser.(NoopParser); s.parser != nil && !isNoop {
+		return s.handleWithAI(ctx, client, conv, msg)
+	}
 
+	// Rule-based fallback (kept as-is for when OPENROUTER_API_KEY is absent).
+	text := strings.TrimSpace(strings.ToLower(msg.Body))
 	switch conv.State {
-	case StateIdle:
+	case StateIdle, StateComplete, StateAwaitingClarification:
 		return s.handleIdle(ctx, conv, text)
 	case StateAwaitingDays:
 		return s.handleAwaitingDays(ctx, conv, text)
 	case StateAwaitingTimes:
-		return s.handleAwaitingTimes(ctx, conv, text)
+		return s.handleAwaitingTimes(ctx, conv, text, msg.Channel)
 	default:
 		return s.handleIdle(ctx, conv, text)
 	}
 }
+
+// handleWithAI uses the LLM parser to extract availability from free-form text.
+func (s *Service) handleWithAI(ctx context.Context, client *InboundClient, conv *Conversation, msg InboundMessage) (string, error) {
+	// Determine the campaign week for the prompt so the LLM resolves day names correctly.
+	weekStart, err := s.repo.GetLatestCampaignWeekStart(ctx, client.ID)
+	if err != nil {
+		// No active campaign found — use next Monday as a safe default.
+		weekStart = nextMonday(time.Now())
+	}
+
+	// If we're waiting for a clarification reply, prepend the original message so the
+	// LLM has full context to resolve the ambiguity.
+	messageText := msg.Body
+	if conv.State == StateAwaitingClarification {
+		if orig, ok := conv.Context["original_message"].(string); ok && orig != "" {
+			messageText = orig + "\n" + msg.Body
+		}
+	}
+
+	result, err := s.parser.Parse(ctx, ParseRequest{
+		MessageText: messageText,
+		WeekStart:   weekStart,
+		Timezone:    "Europe/London",
+	})
+	if err != nil {
+		s.logger.WarnContext(ctx, "AI parser failed; falling back to rule-based intake", "error", err)
+		text := strings.TrimSpace(strings.ToLower(msg.Body))
+		return s.handleIdle(ctx, conv, text)
+	}
+
+	switch result.Status {
+	case ParseStatusParsed:
+		return s.commitParsedWindows(ctx, client, conv, msg.Channel, result)
+
+	case ParseStatusAmbiguous:
+		attempts := 0
+		if a, ok := conv.Context["parse_attempts"].(float64); ok {
+			attempts = int(a)
+		}
+		if attempts >= 2 {
+			_, _ = s.repo.UpdateConversation(ctx, conv.ID, StateComplete, map[string]any{})
+			return "No worries — your trainer will get in touch to sort your schedule.", nil
+		}
+		originalMsg := msg.Body
+		if conv.State == StateAwaitingClarification {
+			if orig, ok := conv.Context["original_message"].(string); ok && orig != "" {
+				originalMsg = orig
+			}
+		}
+		_, _ = s.repo.UpdateConversation(ctx, conv.ID, StateAwaitingClarification, map[string]any{
+			"original_message": originalMsg,
+			"parse_attempts":   float64(attempts + 1),
+		})
+		followUp := result.FollowUp
+		if followUp == "" {
+			followUp = "Could you list which days and times work for you next week?"
+		}
+		return followUp, nil
+
+	case ParseStatusIrrelevant:
+		return "", nil
+
+	default:
+		return "", nil
+	}
+}
+
+// commitParsedWindows saves the AI-extracted windows and marks the conversation complete.
+func (s *Service) commitParsedWindows(ctx context.Context, client *InboundClient, conv *Conversation, channel string, result *ParseResult) (string, error) {
+	entries := make([]availability.PreferredWindowEntry, 0, len(result.Windows))
+	for _, w := range result.Windows {
+		entries = append(entries, availability.PreferredWindowEntry{
+			DayOfWeek: w.DayOfWeek,
+			StartTime: w.StartTime,
+			EndTime:   w.EndTime,
+		})
+	}
+
+	source := availabilitySourceForChannel(channel)
+	if err := s.saveWindowsFromTwilio(ctx, conv.ClientID, source, entries); err != nil {
+		s.logger.ErrorContext(ctx, "failed to save AI-parsed availability",
+			"client_id", conv.ClientID, "error", err)
+		return "Something went wrong saving your availability. Please try again or contact your trainer.", nil
+	}
+
+	parsedJSON, _ := json.Marshal(result.Windows)
+	if err := s.repo.UpdateRecipientParseResult(ctx, client.ID, "parsed", parsedJSON); err != nil {
+		s.logger.WarnContext(ctx, "failed to update recipient parse result", "client_id", client.ID, "error", err)
+	}
+
+	_, _ = s.repo.UpdateConversation(ctx, conv.ID, StateComplete, map[string]any{})
+
+	return "Thanks! I've saved your availability for next week. Your trainer will be in touch with your schedule soon.", nil
+}
+
+// nextMonday returns the date of the coming Monday (or today if today is Monday).
+func nextMonday(now time.Time) time.Time {
+	loc, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		loc = time.UTC
+	}
+	now = now.In(loc)
+	dow := int(now.Weekday()) // Sunday=0
+	if dow == 0 {
+		dow = 7 // treat Sunday as 7 so Monday=1 is always ≥ 1
+	}
+	daysUntilMonday := (8 - dow) % 7
+	if daysUntilMonday == 0 {
+		daysUntilMonday = 7
+	}
+	next := now.AddDate(0, 0, daysUntilMonday)
+	return time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, loc)
+}
+
+// ─── Rule-based fallback handlers (unchanged) ────────────────────────────────
 
 // handleIdle starts a new intake session when the client replies to the coach's prompt.
 func (s *Service) handleIdle(ctx context.Context, conv *Conversation, text string) (string, error) {
@@ -74,13 +225,12 @@ func (s *Service) handleAwaitingDays(ctx context.Context, conv *Conversation, te
 }
 
 // handleAwaitingTimes parses a time range and saves preferred windows to the DB.
-func (s *Service) handleAwaitingTimes(ctx context.Context, conv *Conversation, text string) (string, error) {
+func (s *Service) handleAwaitingTimes(ctx context.Context, conv *Conversation, text, channel string) (string, error) {
 	startTime, endTime, ok := parseTimeRange(text)
 	if !ok {
 		return "Sorry, I didn't get that. Please reply with a time range like: 9am-12pm or 14:00-17:00", nil
 	}
 
-	// Retrieve stored days from conversation context
 	daysRaw, _ := conv.Context["days"].([]any)
 	var days []int
 	for _, d := range daysRaw {
@@ -89,7 +239,6 @@ func (s *Service) handleAwaitingTimes(ctx context.Context, conv *Conversation, t
 		}
 	}
 
-	// Build preferred window entries for each day
 	var entries []availability.PreferredWindowEntry
 	for _, day := range days {
 		entries = append(entries, availability.PreferredWindowEntry{
@@ -99,9 +248,9 @@ func (s *Service) handleAwaitingTimes(ctx context.Context, conv *Conversation, t
 		})
 	}
 
-	// Upsert via availability repository (SMS source)
-	if err := s.saveWindowsFromSMS(ctx, conv.ClientID, entries); err != nil {
-		s.logger.ErrorContext(ctx, "failed to save SMS availability", "client_id", conv.ClientID, "error", err)
+	source := availabilitySourceForChannel(channel)
+	if err := s.saveWindowsFromTwilio(ctx, conv.ClientID, source, entries); err != nil {
+		s.logger.ErrorContext(ctx, "failed to save Twilio availability", "client_id", conv.ClientID, "source", source, "error", err)
 		return "Something went wrong saving your availability. Please try again or contact your trainer.", nil
 	}
 
@@ -110,18 +259,24 @@ func (s *Service) handleAwaitingTimes(ctx context.Context, conv *Conversation, t
 	return "Perfect! Your availability has been saved. Your trainer will be in touch with your schedule soon.", nil
 }
 
-// saveWindowsFromSMS upserts SMS-sourced preferred windows (does not overwrite manual ones).
-func (s *Service) saveWindowsFromSMS(ctx context.Context, clientID interface{ String() string }, entries []availability.PreferredWindowEntry) error {
-	// Reuse availability repository directly for the SMS source
+// saveWindowsFromTwilio upserts Twilio-sourced preferred windows without overwriting manual ones.
+func (s *Service) saveWindowsFromTwilio(ctx context.Context, clientID interface{ String() string }, source string, entries []availability.PreferredWindowEntry) error {
 	id, err := parseUUIDFromStringer(clientID)
 	if err != nil {
 		return err
 	}
-	_, err = s.availRepo.UpsertSMSWindows(ctx, id, entries)
+	_, err = s.availRepo.UpsertTwilioWindows(ctx, id, source, entries)
 	return err
 }
 
-// --- simple NLP helpers ---
+func availabilitySourceForChannel(channel string) string {
+	if channel == ChannelWhatsApp {
+		return ChannelWhatsApp
+	}
+	return ChannelSMS
+}
+
+// ─── Simple NLP helpers (rule-based fallback) ─────────────────────────────────
 
 var dayNames = map[string]int{
 	"monday": 0, "mon": 0,
@@ -157,7 +312,6 @@ func intsToDayNames(days []int) []string {
 	return names
 }
 
-// parseTimeRange tries to parse "9am-12pm", "09:00-12:00", "2pm-5pm" style ranges.
 func parseTimeRange(text string) (start, end string, ok bool) {
 	separators := []string{"-", "to", "–", "—"}
 	for _, sep := range separators {
@@ -175,7 +329,6 @@ func parseTimeRange(text string) (start, end string, ok bool) {
 	return "", "", false
 }
 
-// normaliseTime converts "9am", "09:00", "14:00" → "09:00" style HH:MM.
 func normaliseTime(raw string) (string, bool) {
 	raw = strings.TrimSpace(strings.ToLower(raw))
 	isPM := strings.HasSuffix(raw, "pm")

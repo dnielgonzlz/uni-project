@@ -29,8 +29,18 @@ type setupIntentBody struct {
 }
 
 // CreateSetupIntent handles POST /api/v1/payments/setup-intent
-// Creates a Stripe SetupIntent so the client can save their card without an immediate charge.
-// FRONTEND: use the returned client_secret to initialise Stripe Elements.
+//
+//	@Summary      Create Stripe SetupIntent
+//	@Description  Creates a Stripe SetupIntent so the client can save their card without an immediate charge. FRONTEND: use the returned client_secret to initialise Stripe Elements.
+//	@Tags         billing
+//	@Accept       json
+//	@Produce      json
+//	@Param        body  body      setupIntentBody  true  "Client details"
+//	@Success      201   {object}  SetupIntentResponse
+//	@Failure      400   {object}  httpx.ErrorResponse
+//	@Failure      422   {object}  httpx.ValidationErrorResponse
+//	@Security     BearerAuth
+//	@Router       /payments/setup-intent [post]
 func (h *Handler) CreateSetupIntent(w http.ResponseWriter, r *http.Request) {
 	var req setupIntentBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -59,8 +69,23 @@ func (h *Handler) CreateSetupIntent(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateMandateFlow handles POST /api/v1/payments/mandate
-// Starts a GoCardless redirect flow.
-// FRONTEND: redirect the client to the returned redirect_url.
+//
+// NOTE: This endpoint is not active in the current release. The GoCardless merchant
+// application was rejected before the project deadline. The implementation is preserved
+// for future development — see ErrGoCardlessNotAvailable in service.go.
+//
+//	@Summary      Start GoCardless mandate flow (not available)
+//	@Description  Starts a GoCardless redirect flow for Direct Debit setup. NOT ACTIVE in this release — GoCardless application was rejected before the project submission deadline. Preserved as future development.
+//	@Tags         billing
+//	@Accept       json
+//	@Produce      json
+//	@Param        body  body      MandateRequest  true  "Client ID and redirect URI"
+//	@Success      201   {object}  MandateResponse
+//	@Failure      400   {object}  httpx.ErrorResponse
+//	@Failure      501   {object}  httpx.ErrorResponse  "Not available in this release"
+//	@Failure      422   {object}  httpx.ValidationErrorResponse
+//	@Security     BearerAuth
+//	@Router       /payments/mandate [post]
 func (h *Handler) CreateMandateFlow(w http.ResponseWriter, r *http.Request) {
 	var req MandateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -81,6 +106,10 @@ func (h *Handler) CreateMandateFlow(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.svc.CreateMandateFlow(r.Context(), clientID, req.RedirectURI)
 	if err != nil {
+		if err == ErrGoCardlessNotAvailable {
+			httpx.Error(w, http.StatusNotImplemented, "GoCardless Direct Debit is not available in this release")
+			return
+		}
 		httpx.InternalError(w, r, h.logger, err)
 		return
 	}
@@ -88,9 +117,27 @@ func (h *Handler) CreateMandateFlow(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, resp)
 }
 
+// completeMandateBody is the body for POST /api/v1/payments/mandate/complete.
+type completeMandateBody struct {
+	ClientID string `json:"client_id" validate:"required,uuid4"`
+}
+
 // CompleteMandateFlow handles POST /api/v1/payments/mandate/complete
-// Finalises a GoCardless redirect flow after the client has authorised the mandate.
-// Expects ?redirect_flow_id=RF123 on the query string.
+//
+// NOTE: Not active in this release. See CreateMandateFlow for context.
+//
+//	@Summary      Complete GoCardless mandate flow (not available)
+//	@Description  Finalises a GoCardless redirect flow after the client has authorised the Direct Debit mandate. NOT ACTIVE in this release — GoCardless application was rejected before the project submission deadline.
+//	@Tags         billing
+//	@Accept       json
+//	@Produce      json
+//	@Param        redirect_flow_id  query     string               true  "GoCardless redirect flow ID"
+//	@Param        body              body      completeMandateBody  true  "Client ID"
+//	@Success      200               {object}  MandateResponse
+//	@Failure      400               {object}  httpx.ErrorResponse
+//	@Failure      501               {object}  httpx.ErrorResponse  "Not available in this release"
+//	@Security     BearerAuth
+//	@Router       /payments/mandate/complete [post]
 func (h *Handler) CompleteMandateFlow(w http.ResponseWriter, r *http.Request) {
 	flowID := r.URL.Query().Get("redirect_flow_id")
 	if flowID == "" {
@@ -98,9 +145,7 @@ func (h *Handler) CompleteMandateFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		ClientID string `json:"client_id" validate:"required,uuid4"`
-	}
+	var req completeMandateBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -119,6 +164,10 @@ func (h *Handler) CompleteMandateFlow(w http.ResponseWriter, r *http.Request) {
 
 	mandate, err := h.svc.CompleteMandateFlow(r.Context(), clientID, flowID)
 	if err != nil {
+		if err == ErrGoCardlessNotAvailable {
+			httpx.Error(w, http.StatusNotImplemented, "GoCardless Direct Debit is not available in this release")
+			return
+		}
 		httpx.InternalError(w, r, h.logger, err)
 		return
 	}
@@ -136,8 +185,19 @@ type chargeBody struct {
 }
 
 // Charge handles POST /api/v1/billing/charge
-// Allows a coach to manually trigger the monthly charge for a client.
-// Idempotent — safe to call multiple times for the same billing period.
+//
+//	@Summary      Trigger monthly charge
+//	@Description  Manually triggers the monthly billing charge for a client. Idempotent — safe to call multiple times for the same billing period.
+//	@Tags         billing
+//	@Accept       json
+//	@Produce      json
+//	@Param        body  body      chargeBody  true  "Charge details"
+//	@Success      201   {object}  Payment
+//	@Failure      400   {object}  httpx.ErrorResponse
+//	@Failure      409   {object}  httpx.ErrorResponse  "Already charged for this billing period"
+//	@Failure      422   {object}  httpx.ValidationErrorResponse
+//	@Security     BearerAuth
+//	@Router       /billing/charge [post]
 func (h *Handler) Charge(w http.ResponseWriter, r *http.Request) {
 	var req chargeBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -178,10 +238,16 @@ func (h *Handler) Charge(w http.ResponseWriter, r *http.Request) {
 }
 
 // StripeWebhook handles POST /api/v1/webhooks/stripe
-// Receives and verifies Stripe webhook events.
-// IMPORTANT: this handler reads the raw body itself — do NOT put RequireJSON
-// middleware on this route, as it would interfere with raw body access needed
-// for signature verification.
+//
+//	@Summary      Stripe webhook receiver
+//	@Description  Receives and verifies Stripe webhook events. Authenticated by Stripe-Signature header HMAC, not JWT.
+//	@Tags         webhooks
+//	@Accept       application/json
+//	@Produce      json
+//	@Param        Stripe-Signature  header  string  true  "Stripe webhook signature"
+//	@Success      200
+//	@Failure      400  {object}  httpx.ErrorResponse
+//	@Router       /webhooks/stripe [post]
 func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 	rawBody, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MB limit
 	if err != nil {
@@ -207,9 +273,20 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 // GoCardlessWebhook handles POST /api/v1/webhooks/gocardless
-// Receives and verifies GoCardless webhook events.
-// IMPORTANT: this handler reads the raw body itself — do NOT put RequireJSON
-// middleware on this route, as it would interfere with HMAC verification.
+//
+// NOTE: Not active in this release. See CreateMandateFlow for context. The route is
+// registered so GoCardless can be pointed at it in future without a deployment change.
+//
+//	@Summary      GoCardless webhook receiver (not available)
+//	@Description  Receives and verifies GoCardless webhook events. NOT ACTIVE in this release — GoCardless application was rejected before the project submission deadline.
+//	@Tags         webhooks
+//	@Accept       application/json
+//	@Produce      json
+//	@Param        Webhook-Signature  header  string  true  "GoCardless webhook signature"
+//	@Success      200
+//	@Failure      400  {object}  httpx.ErrorResponse
+//	@Failure      501  {object}  httpx.ErrorResponse  "Not available in this release"
+//	@Router       /webhooks/gocardless [post]
 func (h *Handler) GoCardlessWebhook(w http.ResponseWriter, r *http.Request) {
 	rawBody, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MB limit
 	if err != nil {
@@ -225,6 +302,10 @@ func (h *Handler) GoCardlessWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.HandleGoCardlessWebhook(r.Context(), rawBody, sigHeader); err != nil {
+		if err == ErrGoCardlessNotAvailable {
+			httpx.Error(w, http.StatusNotImplemented, "GoCardless Direct Debit is not available in this release")
+			return
+		}
 		httpx.Error(w, http.StatusBadRequest, "webhook processing failed")
 		return
 	}

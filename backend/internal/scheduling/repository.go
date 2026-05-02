@@ -33,7 +33,8 @@ func (r *Repository) CreateSession(ctx context.Context, s *Session) (*Session, e
 		INSERT INTO sessions (coach_id, client_id, schedule_run_id, starts_at, ends_at, status, notes)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, coach_id, client_id, schedule_run_id, starts_at, ends_at,
-		          status, notes, created_at, updated_at`
+		          status, notes, cancellation_reason, cancellation_requested_at,
+		          created_at, updated_at`
 
 	row := r.db.QueryRow(ctx, q,
 		s.CoachID, s.ClientID, s.ScheduleRunID, s.StartsAt, s.EndsAt, s.Status, s.Notes,
@@ -45,7 +46,8 @@ func (r *Repository) CreateSession(ctx context.Context, s *Session) (*Session, e
 func (r *Repository) GetSessionByID(ctx context.Context, id uuid.UUID) (*Session, error) {
 	const q = `
 		SELECT id, coach_id, client_id, schedule_run_id, starts_at, ends_at,
-		       status, notes, created_at, updated_at
+		       status, notes, cancellation_reason, cancellation_requested_at,
+		       created_at, updated_at
 		FROM sessions WHERE id = $1 AND deleted_at IS NULL`
 
 	row := r.db.QueryRow(ctx, q, id)
@@ -56,59 +58,69 @@ func (r *Repository) GetSessionByID(ctx context.Context, id uuid.UUID) (*Session
 	return s, err
 }
 
-// ListSessionsByCoach returns active sessions for a coach, optionally filtered by status.
+// ListSessionsByCoach returns active sessions for a coach with resolved client names.
 func (r *Repository) ListSessionsByCoach(ctx context.Context, coachID uuid.UUID, status string) ([]Session, error) {
 	q := `
-		SELECT id, coach_id, client_id, schedule_run_id, starts_at, ends_at,
-		       status, notes, created_at, updated_at
-		FROM sessions
-		WHERE coach_id = $1 AND deleted_at IS NULL`
+		SELECT s.id, s.coach_id, s.client_id, s.schedule_run_id, s.starts_at, s.ends_at,
+		       s.status, s.notes, s.cancellation_reason, s.cancellation_requested_at,
+		       s.created_at, s.updated_at, u.full_name AS client_name
+		FROM sessions s
+		JOIN clients c ON c.id = s.client_id
+		JOIN users u ON u.id = c.user_id
+		WHERE s.coach_id = $1 AND s.deleted_at IS NULL`
 
 	args := []any{coachID}
 	if status != "" {
-		q += ` AND status = $2`
+		q += ` AND s.status = $2`
 		args = append(args, status)
 	}
-	q += ` ORDER BY starts_at`
+	q += ` ORDER BY s.starts_at`
 
-	return r.querySessionList(ctx, q, args...)
+	return r.querySessionListWithClientName(ctx, q, args...)
 }
 
-// ListSessionsByClient returns active sessions for a client, optionally filtered by status.
+// ListSessionsByClient returns active sessions for a client with resolved coach names.
 func (r *Repository) ListSessionsByClient(ctx context.Context, clientID uuid.UUID, status string) ([]Session, error) {
 	q := `
-		SELECT id, coach_id, client_id, schedule_run_id, starts_at, ends_at,
-		       status, notes, created_at, updated_at
-		FROM sessions
-		WHERE client_id = $1 AND deleted_at IS NULL`
+		SELECT s.id, s.coach_id, s.client_id, s.schedule_run_id, s.starts_at, s.ends_at,
+		       s.status, s.notes, s.cancellation_reason, s.cancellation_requested_at,
+		       s.created_at, s.updated_at, u.full_name AS coach_name
+		FROM sessions s
+		JOIN coaches co ON co.id = s.coach_id
+		JOIN users u ON u.id = co.user_id
+		WHERE s.client_id = $1 AND s.deleted_at IS NULL`
 
 	args := []any{clientID}
 	if status != "" {
-		q += ` AND status = $2`
+		q += ` AND s.status = $2`
 		args = append(args, status)
 	}
-	q += ` ORDER BY starts_at`
+	q += ` ORDER BY s.starts_at`
 
-	return r.querySessionList(ctx, q, args...)
+	return r.querySessionListWithCoachName(ctx, q, args...)
 }
 
-// ListActiveSessionsByRunID returns all proposed/confirmed sessions belonging to a run.
+// ListActiveSessionsByRunID returns all proposed/confirmed sessions belonging to a run, with client names.
 func (r *Repository) ListActiveSessionsByRunID(ctx context.Context, runID uuid.UUID) ([]Session, error) {
 	const q = `
-		SELECT id, coach_id, client_id, schedule_run_id, starts_at, ends_at,
-		       status, notes, created_at, updated_at
-		FROM sessions
-		WHERE schedule_run_id = $1 AND deleted_at IS NULL
-		ORDER BY starts_at`
+		SELECT s.id, s.coach_id, s.client_id, s.schedule_run_id, s.starts_at, s.ends_at,
+		       s.status, s.notes, s.cancellation_reason, s.cancellation_requested_at,
+		       s.created_at, s.updated_at, u.full_name AS client_name
+		FROM sessions s
+		JOIN clients c ON c.id = s.client_id
+		JOIN users u ON u.id = c.user_id
+		WHERE s.schedule_run_id = $1 AND s.deleted_at IS NULL
+		ORDER BY s.starts_at`
 
-	return r.querySessionList(ctx, q, runID)
+	return r.querySessionListWithClientName(ctx, q, runID)
 }
 
 // ListConfirmedSessionsForCoachInRange returns confirmed sessions in a date range (for solver input).
 func (r *Repository) ListConfirmedSessionsForCoachInRange(ctx context.Context, coachID uuid.UUID, from, to time.Time) ([]Session, error) {
 	const q = `
 		SELECT id, coach_id, client_id, schedule_run_id, starts_at, ends_at,
-		       status, notes, created_at, updated_at
+		       status, notes, cancellation_reason, cancellation_requested_at,
+		       created_at, updated_at
 		FROM sessions
 		WHERE coach_id = $1
 		  AND status = 'confirmed'
@@ -125,9 +137,31 @@ func (r *Repository) UpdateSessionStatus(ctx context.Context, id uuid.UUID, stat
 		UPDATE sessions SET status = $2, updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, coach_id, client_id, schedule_run_id, starts_at, ends_at,
-		          status, notes, created_at, updated_at`
+		          status, notes, cancellation_reason, cancellation_requested_at,
+		          created_at, updated_at`
 
 	row := r.db.QueryRow(ctx, q, id, status)
+	s, err := scanSession(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return s, err
+}
+
+// RequestCancellation sets a session to pending_cancellation and records the reason and timestamp.
+func (r *Repository) RequestCancellation(ctx context.Context, id uuid.UUID, reason string, requestedAt time.Time) (*Session, error) {
+	const q = `
+		UPDATE sessions
+		SET status                    = 'pending_cancellation',
+		    cancellation_reason       = $2,
+		    cancellation_requested_at = $3,
+		    updated_at                = NOW()
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING id, coach_id, client_id, schedule_run_id, starts_at, ends_at,
+		          status, notes, cancellation_reason, cancellation_requested_at,
+		          created_at, updated_at`
+
+	row := r.db.QueryRow(ctx, q, id, reason, requestedAt)
 	s, err := scanSession(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -153,6 +187,34 @@ func (r *Repository) ConfirmSessionsByRunID(ctx context.Context, runID uuid.UUID
 		WHERE schedule_run_id = $1 AND status = 'proposed' AND deleted_at IS NULL`
 	_, err := r.db.Exec(ctx, q, runID)
 	return err
+}
+
+// CancelSessionsByIDs cancels specific sessions by primary key (used for partial run confirmation).
+func (r *Repository) CancelSessionsByIDs(ctx context.Context, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	const q = `
+		UPDATE sessions SET status = 'cancelled', updated_at = NOW()
+		WHERE id = ANY($1) AND deleted_at IS NULL`
+	_, err := r.db.Exec(ctx, q, ids)
+	return err
+}
+
+// UpdateSessionTimes reschedules a session to new start/end times.
+func (r *Repository) UpdateSessionTimes(ctx context.Context, id uuid.UUID, startsAt, endsAt time.Time) (*Session, error) {
+	const q = `
+		UPDATE sessions SET starts_at = $2, ends_at = $3, updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING id, coach_id, client_id, schedule_run_id, starts_at, ends_at,
+		          status, notes, cancellation_reason, cancellation_requested_at,
+		          created_at, updated_at`
+	row := r.db.QueryRow(ctx, q, id, startsAt, endsAt)
+	s, err := scanSession(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return s, err
 }
 
 // --- Schedule runs ---
@@ -240,12 +302,58 @@ func (r *Repository) querySessionList(ctx context.Context, q string, args ...any
 
 	var result []Session
 	for rows.Next() {
-		row := rows
 		var s Session
-		if err := row.Scan(
+		if err := rows.Scan(
 			&s.ID, &s.CoachID, &s.ClientID, &s.ScheduleRunID,
 			&s.StartsAt, &s.EndsAt, &s.Status, &s.Notes,
+			&s.CancellationReason, &s.CancellationRequestedAt,
 			&s.CreatedAt, &s.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scheduling: scan session: %w", err)
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) querySessionListWithClientName(ctx context.Context, q string, args ...any) ([]Session, error) {
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("scheduling: query sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var result []Session
+	for rows.Next() {
+		var s Session
+		if err := rows.Scan(
+			&s.ID, &s.CoachID, &s.ClientID, &s.ScheduleRunID,
+			&s.StartsAt, &s.EndsAt, &s.Status, &s.Notes,
+			&s.CancellationReason, &s.CancellationRequestedAt,
+			&s.CreatedAt, &s.UpdatedAt, &s.ClientName,
+		); err != nil {
+			return nil, fmt.Errorf("scheduling: scan session: %w", err)
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) querySessionListWithCoachName(ctx context.Context, q string, args ...any) ([]Session, error) {
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("scheduling: query sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var result []Session
+	for rows.Next() {
+		var s Session
+		if err := rows.Scan(
+			&s.ID, &s.CoachID, &s.ClientID, &s.ScheduleRunID,
+			&s.StartsAt, &s.EndsAt, &s.Status, &s.Notes,
+			&s.CancellationReason, &s.CancellationRequestedAt,
+			&s.CreatedAt, &s.UpdatedAt, &s.CoachName,
 		); err != nil {
 			return nil, fmt.Errorf("scheduling: scan session: %w", err)
 		}
@@ -259,6 +367,7 @@ func scanSession(row pgx.Row) (*Session, error) {
 	err := row.Scan(
 		&s.ID, &s.CoachID, &s.ClientID, &s.ScheduleRunID,
 		&s.StartsAt, &s.EndsAt, &s.Status, &s.Notes,
+		&s.CancellationReason, &s.CancellationRequestedAt,
 		&s.CreatedAt, &s.UpdatedAt,
 	)
 	if err != nil {

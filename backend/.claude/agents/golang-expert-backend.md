@@ -152,7 +152,7 @@ memory: project
 
       - Sessions must fall within the trainer's declared working hours
 
-      - Minimum 24 hour recovery period between sessions for the same client
+      - A client may not have more than one session per calendar day (e.g. Mon 19:00 → Tue 08:00 is allowed; two sessions on the same day are not)
 
       - Monthly session count distributed evenly across weeks (e.g., 4 per month = 1 per week)
 

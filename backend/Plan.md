@@ -218,7 +218,6 @@ POST /api/v1/webhooks/gocardless
 **Goal**: Swagger docs, monitoring, CI/CD pipeline, GDPR endpoints, integration tests.
 
 - [ ] Swagger annotations on all handlers (`swaggo/swag`)
-- [ ] Sentry integration (error tracking + spike alerts)
 - [ ] CloudWatch log shipping (automatic via Elastic Beanstalk)
 - [ ] CloudWatch alarms: 5xx rate > 1%, p95 latency > 5s, payment failure > 5%
 - [ ] GitHub Actions CI: lint → vet → test → build → deploy to Elastic Beanstalk

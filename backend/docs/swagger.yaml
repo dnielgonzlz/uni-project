@@ -1,0 +1,1498 @@
+basePath: /api/v1
+definitions:
+  github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ValidationErrorResponse:
+    properties:
+      error:
+        type: string
+      fields:
+        additionalProperties:
+          type: string
+        type: object
+    type: object
+  internal_auth.ForgotPasswordRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
+  internal_auth.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  internal_auth.LogoutRequest:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  internal_auth.RefreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  internal_auth.RegisterRequest:
+    properties:
+      business_name:
+        description: Coach-only fields
+        maxLength: 120
+        type: string
+      coach_id:
+        description: Client-only fields
+        type: string
+      email:
+        type: string
+      full_name:
+        maxLength: 100
+        minLength: 2
+        type: string
+      password:
+        maxLength: 72
+        minLength: 8
+        type: string
+      phone:
+        type: string
+      role:
+        enum:
+        - coach
+        - client
+        type: string
+      sessions_per_month:
+        maximum: 20
+        minimum: 1
+        type: integer
+      timezone:
+        type: string
+    required:
+    - email
+    - full_name
+    - password
+    - role
+    - timezone
+    type: object
+  internal_auth.ResetPasswordRequest:
+    properties:
+      password:
+        maxLength: 72
+        minLength: 8
+        type: string
+      token:
+        type: string
+    required:
+    - password
+    - token
+    type: object
+  internal_auth.TokenResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        description: seconds
+        type: integer
+      refresh_token:
+        description: omitted on refresh-only responses
+        type: string
+    type: object
+  internal_availability.PreferredWindow:
+    properties:
+      client_id:
+        type: string
+      collected_at:
+        type: string
+      created_at:
+        type: string
+      day_of_week:
+        type: integer
+      end_time:
+        type: string
+      id:
+        type: string
+      source:
+        description: '"manual" | "sms" | "whatsapp"'
+        type: string
+      start_time:
+        type: string
+    type: object
+  internal_availability.PreferredWindowEntry:
+    properties:
+      day_of_week:
+        maximum: 6
+        minimum: 0
+        type: integer
+      end_time:
+        type: string
+      start_time:
+        type: string
+    required:
+    - end_time
+    - start_time
+    type: object
+  internal_availability.SetPreferencesRequest:
+    properties:
+      windows:
+        items:
+          $ref: '#/definitions/internal_availability.PreferredWindowEntry'
+        type: array
+    required:
+    - windows
+    type: object
+  internal_availability.SetWorkingHoursRequest:
+    properties:
+      hours:
+        items:
+          $ref: '#/definitions/internal_availability.WorkingHoursEntry'
+        type: array
+    required:
+    - hours
+    type: object
+  internal_availability.WorkingHours:
+    properties:
+      coach_id:
+        type: string
+      created_at:
+        type: string
+      day_of_week:
+        description: 0=Monday … 6=Sunday (ISO week)
+        type: integer
+      end_time:
+        type: string
+      id:
+        type: string
+      start_time:
+        description: '"HH:MM" in Europe/London local time'
+        type: string
+      updated_at:
+        type: string
+    type: object
+  internal_availability.WorkingHoursEntry:
+    properties:
+      day_of_week:
+        maximum: 6
+        minimum: 0
+        type: integer
+      end_time:
+        type: string
+      start_time:
+        type: string
+    required:
+    - end_time
+    - start_time
+    type: object
+  internal_billing.MandateRequest:
+    properties:
+      client_id:
+        type: string
+      redirect_uri:
+        type: string
+    required:
+    - client_id
+    - redirect_uri
+    type: object
+  internal_billing.MandateResponse:
+    properties:
+      flow_id:
+        type: string
+      redirect_url:
+        description: 'FRONTEND: redirect client to this URL'
+        type: string
+    type: object
+  internal_billing.Payment:
+    properties:
+      amount_pence:
+        type: integer
+      billing_month:
+        type: integer
+      billing_year:
+        type: integer
+      client_id:
+        type: string
+      created_at:
+        type: string
+      currency:
+        type: string
+      id:
+        type: string
+      provider:
+        type: string
+      provider_ref:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  internal_billing.SetupIntentResponse:
+    properties:
+      client_secret:
+        type: string
+      setup_intent_id:
+        type: string
+    type: object
+  internal_billing.chargeBody:
+    properties:
+      amount_pence:
+        minimum: 100
+        type: integer
+      billing_month:
+        maximum: 12
+        minimum: 1
+        type: integer
+      billing_year:
+        minimum: 2024
+        type: integer
+      client_id:
+        type: string
+      provider:
+        enum:
+        - stripe
+        - gocardless
+        type: string
+    required:
+    - amount_pence
+    - billing_month
+    - billing_year
+    - client_id
+    - provider
+    type: object
+  internal_billing.completeMandateBody:
+    properties:
+      client_id:
+        type: string
+    required:
+    - client_id
+    type: object
+  internal_billing.setupIntentBody:
+    properties:
+      client_id:
+        type: string
+      email:
+        type: string
+      full_name:
+        type: string
+    required:
+    - client_id
+    - email
+    - full_name
+    type: object
+  internal_scheduling.CancelSessionRequest:
+    properties:
+      reason:
+        maxLength: 500
+        type: string
+    required:
+    - reason
+    type: object
+  internal_scheduling.CancelSessionResponse:
+    properties:
+      credit:
+        $ref: '#/definitions/internal_scheduling.SessionCredit'
+      message:
+        type: string
+      session:
+        $ref: '#/definitions/internal_scheduling.Session'
+      within_24h_window:
+        type: boolean
+    type: object
+  internal_scheduling.ScheduleRun:
+    properties:
+      coach_id:
+        type: string
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      sessions:
+        description: populated by service layer
+        items:
+          $ref: '#/definitions/internal_scheduling.Session'
+        type: array
+      solver_input: {}
+      solver_output: {}
+      status:
+        type: string
+      updated_at:
+        type: string
+      week_start:
+        type: string
+    type: object
+  internal_scheduling.Session:
+    properties:
+      cancellation_reason:
+        type: string
+      cancellation_requested_at:
+        type: string
+      client_id:
+        type: string
+      coach_id:
+        type: string
+      created_at:
+        type: string
+      ends_at:
+        type: string
+      id:
+        type: string
+      notes:
+        type: string
+      schedule_run_id:
+        type: string
+      starts_at:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  internal_scheduling.SessionCredit:
+    properties:
+      client_id:
+        type: string
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      reason:
+        type: string
+      source_session_id:
+        type: string
+      used_session_id:
+        type: string
+    type: object
+  internal_scheduling.TriggerRunRequest:
+    properties:
+      week_start:
+        description: '"YYYY-MM-DD"'
+        type: string
+    required:
+    - week_start
+    type: object
+  internal_users.Client:
+    properties:
+      coach_id:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      priority_score:
+        type: integer
+      sessions_per_month:
+        type: integer
+      tenure_started_at:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  internal_users.ClientProfile:
+    properties:
+      client:
+        $ref: '#/definitions/internal_users.Client'
+      user:
+        $ref: '#/definitions/internal_users.User'
+    type: object
+  internal_users.Coach:
+    properties:
+      business_name:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  internal_users.CoachProfile:
+    properties:
+      coach:
+        $ref: '#/definitions/internal_users.Coach'
+      user:
+        $ref: '#/definitions/internal_users.User'
+    type: object
+  internal_users.DataExport:
+    properties:
+      exported_at:
+        type: string
+      payments: {}
+      profile: {}
+      sessions: {}
+      user: {}
+    type: object
+  internal_users.UpdateClientRequest:
+    properties:
+      full_name:
+        maxLength: 100
+        minLength: 2
+        type: string
+      phone:
+        type: string
+      timezone:
+        type: string
+    required:
+    - full_name
+    - timezone
+    type: object
+  internal_users.UpdateCoachRequest:
+    properties:
+      business_name:
+        maxLength: 120
+        type: string
+      full_name:
+        maxLength: 100
+        minLength: 2
+        type: string
+      phone:
+        type: string
+      timezone:
+        type: string
+    required:
+    - full_name
+    - timezone
+    type: object
+  internal_users.User:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      full_name:
+        type: string
+      id:
+        type: string
+      is_verified:
+        type: boolean
+      phone:
+        type: string
+      role:
+        type: string
+      timezone:
+        type: string
+      updated_at:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@pt-scheduler.io
+    name: PT Scheduler Support
+  description: Intelligent scheduling system for UK personal trainers.
+  license:
+    name: MIT
+  termsOfService: http://swagger.io/terms/
+  title: PT Scheduler API
+  version: "1.0"
+paths:
+  /auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: Sends a password reset email if the account exists. Always returns
+        200 to prevent email enumeration.
+      parameters:
+      - description: Email address
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      summary: Request password reset
+      tags:
+      - auth
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates a user and returns access + refresh tokens.
+      parameters:
+      - description: Login credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_auth.TokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "401":
+          description: Incorrect email or password
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      summary: Login
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      consumes:
+      - application/json
+      description: Revokes the provided refresh token.
+      parameters:
+      - description: Refresh token to revoke
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.LogoutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      summary: Logout
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Issues a new access token from a valid refresh token.
+      parameters:
+      - description: Refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_auth.TokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "401":
+          description: Invalid or expired refresh token
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      summary: Refresh tokens
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a coach or client account and returns access + refresh
+        tokens.
+      parameters:
+      - description: Registration payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_auth.TokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "409":
+          description: Email already registered
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ValidationErrorResponse'
+      summary: Register a new user
+      tags:
+      - auth
+  /auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: Sets a new password using a single-use reset token (valid 1 hour).
+      parameters:
+      - description: Reset token and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Token invalid or expired
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      summary: Reset password
+      tags:
+      - auth
+  /billing/charge:
+    post:
+      consumes:
+      - application/json
+      description: Manually triggers the monthly billing charge for a client. Idempotent
+        — safe to call multiple times for the same billing period.
+      parameters:
+      - description: Charge details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_billing.chargeBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_billing.Payment'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "409":
+          description: Already charged for this billing period
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ValidationErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Trigger monthly charge
+      tags:
+      - billing
+  /clients/{clientID}/preferences:
+    get:
+      description: Returns the time windows the client prefers for their sessions.
+      parameters:
+      - description: Client UUID
+        in: path
+        name: clientID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_availability.PreferredWindow'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get client preferred windows
+      tags:
+      - availability
+    put:
+      consumes:
+      - application/json
+      description: Replaces all preferred time windows for the client. Provide the
+        full set on every call.
+      parameters:
+      - description: Client UUID
+        in: path
+        name: clientID
+        required: true
+        type: string
+      - description: Preferred windows
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_availability.SetPreferencesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_availability.PreferredWindow'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ValidationErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Set client preferred windows
+      tags:
+      - availability
+  /clients/{clientID}/profile:
+    get:
+      description: Returns a client's profile including their sessions-per-month quota
+        and priority score.
+      parameters:
+      - description: Client UUID
+        in: path
+        name: clientID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_users.ClientProfile'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get client profile
+      tags:
+      - clients
+    put:
+      consumes:
+      - application/json
+      description: Updates a client's full name, phone, and timezone.
+      parameters:
+      - description: Client UUID
+        in: path
+        name: clientID
+        required: true
+        type: string
+      - description: Updated fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_users.UpdateClientRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_users.ClientProfile'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ValidationErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update client profile
+      tags:
+      - clients
+  /coaches/{coachID}/availability:
+    get:
+      description: Returns the coach's declared working hours for each day of the
+        week.
+      parameters:
+      - description: Coach UUID
+        in: path
+        name: coachID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_availability.WorkingHours'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get coach working hours
+      tags:
+      - availability
+    put:
+      consumes:
+      - application/json
+      description: Replaces all working-hour slots for the coach. Provide the full
+        weekly schedule on every call.
+      parameters:
+      - description: Coach UUID
+        in: path
+        name: coachID
+        required: true
+        type: string
+      - description: Weekly schedule
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_availability.SetWorkingHoursRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_availability.WorkingHours'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ValidationErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Set coach working hours
+      tags:
+      - availability
+  /coaches/{coachID}/profile:
+    get:
+      description: Returns the public profile of a coach, including business name
+        and user details.
+      parameters:
+      - description: Coach UUID
+        in: path
+        name: coachID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_users.CoachProfile'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get coach profile
+      tags:
+      - coaches
+    put:
+      consumes:
+      - application/json
+      description: Updates the coach's business name, full name, phone, and timezone.
+      parameters:
+      - description: Coach UUID
+        in: path
+        name: coachID
+        required: true
+        type: string
+      - description: Updated fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_users.UpdateCoachRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_users.CoachProfile'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ValidationErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update coach profile
+      tags:
+      - coaches
+  /me/export:
+    get:
+      description: Returns all data held for the currently authenticated user as a
+        JSON document (GDPR right of access).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_users.DataExport'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Export my data (GDPR)
+      tags:
+      - gdpr
+  /payments/mandate:
+    post:
+      consumes:
+      - application/json
+      description: 'Starts a GoCardless redirect flow for Direct Debit setup. FRONTEND:
+        redirect the client to the returned redirect_url.'
+      parameters:
+      - description: Client ID and redirect URI
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_billing.MandateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_billing.MandateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ValidationErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Start GoCardless mandate flow
+      tags:
+      - billing
+  /payments/mandate/complete:
+    post:
+      consumes:
+      - application/json
+      description: Finalises a GoCardless redirect flow after the client has authorised
+        the Direct Debit mandate.
+      parameters:
+      - description: GoCardless redirect flow ID
+        in: query
+        name: redirect_flow_id
+        required: true
+        type: string
+      - description: Client ID
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_billing.completeMandateBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_billing.MandateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Complete GoCardless mandate flow
+      tags:
+      - billing
+  /payments/setup-intent:
+    post:
+      consumes:
+      - application/json
+      description: 'Creates a Stripe SetupIntent so the client can save their card
+        without an immediate charge. FRONTEND: use the returned client_secret to initialise
+        Stripe Elements.'
+      parameters:
+      - description: Client details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_billing.setupIntentBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_billing.SetupIntentResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ValidationErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create Stripe SetupIntent
+      tags:
+      - billing
+  /schedule-runs:
+    post:
+      consumes:
+      - application/json
+      description: Runs the OR-Tools solver for the given week and returns proposed
+        sessions for the coach to review.
+      parameters:
+      - description: Week start date (Monday, YYYY-MM-DD)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_scheduling.TriggerRunRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_scheduling.ScheduleRun'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Infeasible schedule or constraint violation
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Trigger a schedule run
+      tags:
+      - scheduling
+  /schedule-runs/{runID}:
+    get:
+      description: Returns a schedule run and its proposed or confirmed sessions.
+      parameters:
+      - description: Schedule run UUID
+        in: path
+        name: runID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_scheduling.ScheduleRun'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a schedule run
+      tags:
+      - scheduling
+  /schedule-runs/{runID}/confirm:
+    post:
+      description: Coach approves the proposed schedule. All proposed sessions become
+        confirmed. Notifications are enqueued.
+      parameters:
+      - description: Schedule run UUID
+        in: path
+        name: runID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_scheduling.ScheduleRun'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "409":
+          description: Run is not pending confirmation
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Confirm a schedule run
+      tags:
+      - scheduling
+  /schedule-runs/{runID}/reject:
+    post:
+      description: Coach rejects the proposed schedule. All proposed sessions are
+        soft-deleted.
+      parameters:
+      - description: Schedule run UUID
+        in: path
+        name: runID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_scheduling.ScheduleRun'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "409":
+          description: Run is not pending confirmation
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Reject a schedule run
+      tags:
+      - scheduling
+  /sessions:
+    get:
+      description: Coaches see all sessions across their clients. Clients see their
+        own sessions. Filter by status with ?status=proposed|confirmed|cancelled|completed.
+      parameters:
+      - description: Filter by session status
+        enum:
+        - proposed
+        - confirmed
+        - cancelled
+        - completed
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_scheduling.Session'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List sessions
+      tags:
+      - scheduling
+  /sessions/{sessionID}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: 'Outside 24h window: cancels immediately and issues a credit. Inside
+        24h window: moves to pending_cancellation and notifies the coach to decide.
+        Check within_24h_window in the response to know which path was taken.'
+      parameters:
+      - description: Session UUID
+        in: path
+        name: sessionID
+        required: true
+        type: string
+      - description: Cancellation reason
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_scheduling.CancelSessionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_scheduling.CancelSessionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Cancel a session
+      tags:
+      - scheduling
+  /sessions/{sessionID}/cancel/approve:
+    post:
+      description: Coach confirms the client loses the session. No credit is issued.
+        Only valid when session is in pending_cancellation status.
+      parameters:
+      - description: Session UUID
+        in: path
+        name: sessionID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_scheduling.Session'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Approve cancellation (session lost)
+      tags:
+      - scheduling
+  /sessions/{sessionID}/cancel/waive:
+    post:
+      description: Coach waives the 24h policy. Session is cancelled and a session
+        credit is issued to the client. Only valid when session is in pending_cancellation
+        status.
+      parameters:
+      - description: Session UUID
+        in: path
+        name: sessionID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_scheduling.CancelSessionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Waive cancellation policy (credit issued)
+      tags:
+      - scheduling
+  /webhooks/gocardless:
+    post:
+      consumes:
+      - application/json
+      description: Receives and verifies GoCardless webhook events. Authenticated
+        by Webhook-Signature header HMAC, not JWT.
+      parameters:
+      - description: GoCardless webhook signature
+        in: header
+        name: Webhook-Signature
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      summary: GoCardless webhook receiver
+      tags:
+      - webhooks
+  /webhooks/stripe:
+    post:
+      consumes:
+      - application/json
+      description: Receives and verifies Stripe webhook events. Authenticated by Stripe-Signature
+        header HMAC, not JWT.
+      parameters:
+      - description: Stripe webhook signature
+        in: header
+        name: Stripe-Signature
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_danielgonzalez_pt-scheduler_internal_platform_httpx.ErrorResponse'
+      summary: Stripe webhook receiver
+      tags:
+      - webhooks
+  /webhooks/twilio:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Receives inbound SMS messages from clients via Twilio. Parses availability
+        and updates the client's preferred windows. Replies with TwiML. Authenticated
+        by Twilio HMAC (X-Twilio-Signature), not JWT.
+      parameters:
+      - description: Sender phone number (E.164)
+        in: formData
+        name: From
+        required: true
+        type: string
+      - description: SMS message body
+        in: formData
+        name: Body
+        required: true
+        type: string
+      produces:
+      - text/xml
+      responses:
+        "200":
+          description: OK
+      summary: Twilio inbound SMS webhook
+      tags:
+      - webhooks
+securityDefinitions:
+  BearerAuth:
+    description: Enter "Bearer " followed by your access token
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

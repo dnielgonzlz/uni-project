@@ -15,27 +15,29 @@ const (
 
 // User is the base account row stored in the users table.
 type User struct {
-	ID           uuid.UUID  `json:"id"`
-	Email        string     `json:"email"`
-	PasswordHash string     `json:"-"` // never serialised
-	Role         string     `json:"role"`
-	FullName     string     `json:"full_name"`
-	PhoneE164    *string    `json:"phone,omitempty"`
-	Timezone     string     `json:"timezone"`
-	IsVerified   bool       `json:"is_verified"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	DeletedAt    *time.Time `json:"-"`
+	ID            uuid.UUID  `json:"id"`
+	Email         string     `json:"email"`
+	PasswordHash  string     `json:"-"` // never serialised
+	Role          string     `json:"role"`
+	FullName      string     `json:"full_name"`
+	PhoneE164     *string    `json:"phone,omitempty"`
+	Timezone      string     `json:"timezone"`
+	IsVerified    bool       `json:"is_verified"`
+	CalendarToken uuid.UUID  `json:"calendar_token"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	DeletedAt     *time.Time `json:"-"`
 }
 
 // Coach is the coach-specific profile row (1:1 with User).
 type Coach struct {
-	ID               uuid.UUID  `json:"id"`
-	UserID           uuid.UUID  `json:"user_id"`
-	BusinessName     *string    `json:"business_name,omitempty"`
-	StripeAccountID  *string    `json:"-"` // internal, not exposed via API
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	ID                 uuid.UUID  `json:"id"`
+	UserID             uuid.UUID  `json:"user_id"`
+	BusinessName       *string    `json:"business_name,omitempty"`
+	StripeAccountID    *string    `json:"-"` // internal, not exposed via API
+	MaxSessionsPerDay  int        `json:"max_sessions_per_day"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 // Client is the client-specific profile row (1:1 with User).
@@ -62,12 +64,20 @@ type ClientProfile struct {
 	Client Client `json:"client"`
 }
 
+// CoachClientSummary is the list/detail shape used by coach-side client management views.
+type CoachClientSummary struct {
+	User                  User   `json:"user"`
+	Client                Client `json:"client"`
+	ConfirmedSessionCount int    `json:"confirmed_session_count"`
+}
+
 // UpdateCoachRequest is the body for PUT /coaches/{id}/profile.
 type UpdateCoachRequest struct {
-	FullName     string  `json:"full_name"     validate:"required,min=2,max=100"`
-	BusinessName *string `json:"business_name" validate:"omitempty,max=120"`
-	PhoneE164    *string `json:"phone"         validate:"omitempty,e164"`
-	Timezone     string  `json:"timezone"      validate:"required"`
+	FullName          string  `json:"full_name"             validate:"required,min=2,max=100"`
+	BusinessName      *string `json:"business_name"         validate:"omitempty,max=120"`
+	PhoneE164         *string `json:"phone"                 validate:"omitempty,e164"`
+	Timezone          string  `json:"timezone"              validate:"required"`
+	MaxSessionsPerDay int     `json:"max_sessions_per_day"  validate:"min=2,max=8"`
 }
 
 // UpdateClientRequest is the body for PUT /clients/{id}/profile.
