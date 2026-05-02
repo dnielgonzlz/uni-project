@@ -31,3 +31,11 @@ Thumbs.db
 /bin/
 /dist/
 /build/
+
+# Compiled binaries
+backend/api/api
+backend/server
+backend/deploy.zip
+solver/solver-layer.zip
+solver/solver-function.zip
+solver/layer/
