@@ -206,7 +206,7 @@ func (r *SubscriptionRepository) AddSessionBalance(ctx context.Context, subscrip
 	if err != nil {
 		return fmt.Errorf("billing: begin add session balance tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const updateQ = `
 		UPDATE client_subscriptions
@@ -232,7 +232,7 @@ func (r *SubscriptionRepository) DeductSession(ctx context.Context, clientID uui
 	if err != nil {
 		return fmt.Errorf("billing: begin deduct session tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const checkQ = `SELECT id, sessions_balance FROM client_subscriptions WHERE client_id = $1`
 	var subID uuid.UUID
