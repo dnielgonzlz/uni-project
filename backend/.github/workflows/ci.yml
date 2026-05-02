@@ -10,6 +10,9 @@ jobs:
   test:
     name: Lint, vet & test
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
 
     services:
       postgres:

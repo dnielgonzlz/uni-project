@@ -15,6 +15,9 @@ jobs:
     name: Build & deploy to Elastic Beanstalk
     runs-on: ubuntu-latest
     environment: production   # requires manual approval in GitHub (optional gate)
+    defaults:
+      run:
+        working-directory: backend
 
     steps:
       - name: Checkout
@@ -51,10 +54,10 @@ jobs:
         run: go test -race -short ./...
 
       - name: Build Linux binary
-        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o api ./cmd/api
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o server ./cmd/api
 
       - name: Create deployment ZIP
-        run: zip deploy.zip api Procfile .ebextensions/01-env.config
+        run: zip deploy.zip server Procfile .ebextensions/01-env.config
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
