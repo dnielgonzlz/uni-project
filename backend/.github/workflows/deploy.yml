@@ -58,7 +58,7 @@ jobs:
         run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o server ./cmd/api
 
       - name: Create deployment ZIP
-        run: zip deploy.zip server Procfile .ebextensions/01-env.config
+        run: zip ../deploy.zip server Procfile .ebextensions/01-env.config
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -76,7 +76,7 @@ jobs:
           environment_name: ${{ secrets.EB_ENV_NAME }}
           region: ${{ secrets.AWS_REGION }}
           version_label: ${{ github.sha }}
-          deployment_package: backend/deploy.zip
+          deployment_package: deploy.zip
           wait_for_environment_recovery: 60
 
       - name: Smoke test — health check
