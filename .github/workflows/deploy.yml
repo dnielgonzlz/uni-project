@@ -28,6 +28,7 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache: true
+          cache-dependency-path: backend/go.sum
 
       - name: Run tests (gate before deploy)
         env:
@@ -80,6 +81,9 @@ jobs:
 
       - name: Smoke test — health check
         run: |
+          ENDPOINT=$(aws elasticbeanstalk describe-environments \
+            --environment-names "${{ secrets.EB_ENV_NAME }}" \
+            --query 'Environments[0].CNAME' \
+            --output text)
           sleep 10
-          curl --fail --retry 5 --retry-delay 5 \
-            http://${{ secrets.EB_ENV_NAME }}.eu-west-2.elasticbeanstalk.com/healthz
+          curl --fail --retry 5 --retry-delay 5 "http://${ENDPOINT}/healthz"
