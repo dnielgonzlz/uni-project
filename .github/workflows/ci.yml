@@ -59,18 +59,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version-file: backend/go.mod
           cache: true
 
       - name: Verify module integrity
         run: go mod verify
 
       - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          args: --timeout=5m
-          working-directory: backend
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+      - name: Run golangci-lint
+        run: golangci-lint run --timeout=5m
 
       - name: go vet
         run: go vet ./...
