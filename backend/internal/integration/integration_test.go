@@ -284,4 +284,6 @@ func TestSessionExclusionConstraint(t *testing.T) {
 // noopMailer satisfies auth.Mailer without sending real emails.
 type noopMailer struct{}
 
-func (n *noopMailer) SendPasswordReset(_ context.Context, _, _, _ string) error { return nil }
+func (n *noopMailer) SendPasswordReset(_ context.Context, _, _, _ string) error     { return nil }
+func (n *noopMailer) SendVerificationEmail(_ context.Context, _, _, _ string) error { return nil }
+func (n *noopMailer) SendEmail(_ context.Context, _, _, _, _ string) error           { return nil }
